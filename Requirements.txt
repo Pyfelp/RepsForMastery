@@ -1,5 +1,5 @@
 streamlit>=1.35
-edge-tts
+edge-tts==7.2.7
 faster-whisper
 streamlit-mic-recorder
 python-Levenshtein
