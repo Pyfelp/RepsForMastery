@@ -1,0 +1,6 @@
+streamlit>=1.35
+edge-tts
+faster-whisper
+streamlit-mic-recorder
+python-Levenshtein
+numpy
