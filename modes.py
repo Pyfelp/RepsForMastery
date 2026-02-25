@@ -50,7 +50,7 @@ def load_cards(from_start_train = False):
         **TXT example:**
         ```txt
 
-          Hello::"Привет
+          Hello::Привет
           How are you? :: Как дела?
 
         """)
@@ -86,6 +86,8 @@ def load_cards(from_start_train = False):
                 flashcards = parse_flashcards(content)
             except Exception as e:
                 st.error(f"Invalid file: {e}")
+    if st.button("Cancel"):
+        goto("prepare")
 
     if flashcards:
         st.session_state.flashcards = flashcards
