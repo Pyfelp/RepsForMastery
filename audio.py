@@ -41,7 +41,7 @@ def play_russian(ru_txt: str) -> bytes:
 
     return asyncio.run(_tts())
 
-model = WhisperModel"small", device="cpu", compute_type="int8")
+model = WhisperModel("small", device="cpu", compute_type="int8")
 def transcribe_ru(audio_bytes):
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         f.write(audio_bytes)
