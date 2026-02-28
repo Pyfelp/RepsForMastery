@@ -234,7 +234,7 @@ def train():
             st.session_state.tts_audio = play_russian(russian)
         st.session_state.tts_for_index = current_index
         if st.session_state.tts_audio:
-            st.audio(st.session_state.tts_audio, format="audio/aac")
+            st.audio(st.session_state.tts_audio)     # format="audio/aac"
 
     col1, col2 = st.columns(2)
 
