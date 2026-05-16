@@ -1,14 +1,27 @@
 import streamlit as st
-from modes import train, prep, load_cards, goto
+from modes import train, prep, load_cards, get_ai, goto, manage_decks
+from auth import auth_gate, logout_button
 
-st.set_page_config(page_title="RuLearn", layout="centered")
+st.set_page_config(page_title="Reps for Mastery", layout="centered")
+
+if not auth_gate():
+    st.stop()
+
+logout_button()
 
 st.title("🇷🇺 Reps for Mastery - Russian")
+
 # ---------------------------
 # SESSION STATE INIT
 # ---------------------------
 if "mode" not in st.session_state:
     st.session_state.mode = "prepare"
+if "prev_mode" not in st.session_state:
+    st.session_state.prev_mode = ""
+if "lang" not in st.session_state:
+    st.session_state.lang = "ru"
+if "deck_index" not in st.session_state:
+    st.session_state.deck_index = 0
 if "shuffle" not in st.session_state:
     st.session_state.shuffle = True
 if "cards" not in st.session_state:
@@ -17,7 +30,10 @@ if "flashcards" not in st.session_state:
     st.session_state.flashcards = {}
 if "score" not in st.session_state:
     st.session_state.score = 0
-
+if "ai_api" not in st.session_state:
+    st.session_state.ai_api = ""
+if "ai_user" not in st.session_state:
+    st.session_state.ai_user = False
 if "index" not in st.session_state:
     st.session_state.index = 0
 
@@ -33,8 +49,19 @@ if "tts_audio" not in st.session_state:
     st.session_state.tts_audio = None
 if "tts_for_index" not in st.session_state:
     st.session_state.tts_for_index = None
+if "decks" not in st.session_state:
+    st.session_state.decks = []
 
-
+# ---------------------------
+# Sidebar setting buttorns
+# ---------------------------
+with st.sidebar:
+    if st.button("AI functionality"):
+        st.session_state.prev_mode = st.session_state.mode
+        goto("get_ai")
+    if st.button("Manage decks"):
+        st.session_state.prev_mode = st.session_state.mode
+        goto("manage_decks")
 
 def main():
     st.divider()
@@ -45,6 +72,10 @@ def main():
         train()
     elif mode == "prepare":
         prep()
+    elif mode == "get_ai":
+        get_ai()
+    elif mode == "manage_decks":
+        manage_decks()
     elif mode == "load":
         load_cards()
     else:
