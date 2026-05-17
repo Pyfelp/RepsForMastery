@@ -73,7 +73,7 @@ def get_user_data():
             .eq("language", st.session_state.lang)
             .execute()
         )
-        decks_data = res.data
+        decks_data = {d["name"]: d["id"] for d in res.data}
 
         if decks_data:
             st.session_state.decks = decks_data
@@ -93,7 +93,7 @@ def get_deck(deck_id: int) -> dict:
     deck = (
         client.table("cards")
         .select("id", "phrase_front", "phrase_back", "explanation")
-        .eq("deck_id", deck_id + 1)
+        .eq("deck_id", deck_id)
         .execute()
     )
     cards_dict = {

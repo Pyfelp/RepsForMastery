@@ -8,6 +8,8 @@ from ai import explain_phrase
 def goto(mode:str):
     st.session_state.mode = mode
     st.rerun()
+def unload_flashcards():
+    st.session_state.flashcards = {}
 
 def clear_memory():
     st.session_state.submitted = False
@@ -92,13 +94,18 @@ def load_cards():
             except Exception as e:
                 st.error(f"Invalid file: {e}")
     if st.button("Cancel"):
+        unload_flashcards()
         goto("prepare")
 
     if flashcards:
         st.session_state.flashcards = flashcards
         if st.button("Save deck"):
-            success = save_new_deck(deck_name)
-            st.write(success)
+            if deck_name:
+                if save_new_deck(deck_name):
+                    st.session_state.deck = deck_name
+                    goto("prepare")
+            else:
+                st.warning("Please provide a deck name.")
     # ---------------------------
     # 2️⃣ PREPARE SESSION CARDS
     # ---------------------------
@@ -131,16 +138,16 @@ def get_ai():
 def manage_decks():
     st.header("🗂 Manage decks")
     get_user_data()
-    decks_list = st.session_state.get("decks") or []
-    if not decks_list:
+    decks_dict = st.session_state.get("decks") or []
+    if not decks_dict:
         st.info("You have no decks yet.")
         if st.button("Back"):
             goto("prepare")
         return
 
-    deck_to_id = {deck["name"]: deck["id"] for deck in decks_list}
-    selected_names = st.multiselect("Decks", list(deck_to_id.keys()))
-    selected_deck_ids = [deck_to_id[name] for name in selected_names]
+
+    selected_names = st.multiselect("Decks", decks_dict.keys())
+    selected_deck_ids = [decks_dict[name] for name in selected_names]
 
     if selected_deck_ids:
         col1, col2 = st.columns(2)
@@ -150,6 +157,7 @@ def manage_decks():
             if remove_decks(selected_deck_ids):
                 st.session_state.pop("editing_decks", None)
                 st.success(f"Deleted {len(selected_deck_ids)} deck(s).")
+                unload_flashcards()
                 st.rerun()
 
     editing = st.session_state.get("editing_decks")
@@ -163,13 +171,19 @@ def manage_decks():
             if card_ids and st.button("Remove cards"):
                 if remove_cards(card_ids):
                     st.success(f"Removed {len(card_ids)} card(s).")
+                    unload_flashcards()
                     st.rerun()
 
     if st.button("Back to menu"):
         st.session_state.pop("editing_decks", None)
-        if st.session_state.prev_mode != "prepare":
+
+        if st.session_state.prev_mode ==     st.session_state.mode:
+            goto("prepare")
+        elif st.session_state.prev_mode != "prepare":
             get_user_data()
-        goto(st.session_state.prev_mode)
+            goto(st.session_state.prev_mode)
+        else:
+            goto("prepare")
 def prep():
     flashcards = st.session_state.flashcards
     get_user_data()
@@ -178,15 +192,14 @@ def prep():
 
     if st.session_state.decks:
         decks = st.session_state.get("decks")
-        option_list = [d["name"] for d in decks]
-        selected_deck = st.selectbox("Which deck will you train on?", option_list, index=st.session_state.deck_index)
-        selected_index = option_list.index(selected_deck)
-        st.write(selected_index)
+        option_list = decks.keys()
+        selected_deck = st.selectbox("Which deck will you train on?", option_list)
+        selected_index = decks[selected_deck]
+
 
         if st.button("Load deck"):
-            st.session_state.flashcards = get_deck(selected_index+1)
-            st.session_state.deck_index = selected_index
-            st.write(st.session_state.flashcards)
+            st.session_state.flashcards = get_deck(selected_index)
+            st.session_state.deck = selected_deck
             st.session_state.load_from_start = True
             goto("prepare")
     else:
@@ -222,13 +235,12 @@ def prep():
             prep_cards()
             goto("train")
 
-    if not st.session_state.ai_api:
-        if st.button("Get AI functionality"):
-            goto("get_ai")
+
 
 
 def train():
     st.header("🧠 Put in some reps!")
+    st.write(st.session_state.routine)
     current_index = st.session_state.index
     english, russian = st.session_state.cards[current_index]
     deck_size = len(st.session_state.flashcards)
@@ -302,7 +314,7 @@ def train():
     # -----------------------
     # 🎤 SPEAKING MODE (STUB)
     # -----------------------
-    else:
+    elif st.session_state.routine == "🎤 Speaking":
         if st.session_state.submitted == False:
 
             user_input = rec_audio()

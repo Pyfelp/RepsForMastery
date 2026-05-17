@@ -20,8 +20,8 @@ if "prev_mode" not in st.session_state:
     st.session_state.prev_mode = ""
 if "lang" not in st.session_state:
     st.session_state.lang = "ru"
-if "deck_index" not in st.session_state:
-    st.session_state.deck_index = 0
+if "deck" not in st.session_state:
+    st.session_state.deck = ""
 if "shuffle" not in st.session_state:
     st.session_state.shuffle = True
 if "cards" not in st.session_state:
