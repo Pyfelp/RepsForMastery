@@ -1,6 +1,9 @@
+import random
+
 import streamlit as st
 from supabase import create_client, Client
-
+from utills import random_cards
+import pandas as pd
 @st.cache_resource
 def get_supabase() -> Client:
     return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
@@ -198,3 +201,26 @@ def save_ai_explanation(card_id: int, explanation: str) -> bool:
     except Exception as e:
         st.error(f"Could not save explanation: {e}")
         return False
+
+def prepare_random_deck():
+    client = get_supabase()
+    res = (
+        client.table("card_attempts")
+        .select("tested_at", "user_answer", "correct_answer", "score", "card_id")
+        .eq("language", "ru")
+        .execute()
+    )
+    df = pd.DataFrame(res.data)
+    card_ids = random_cards(df)
+    res = (
+        client.table("cards")
+        .select("id, phrase_front, phrase_back, explanation")
+        .in_("id", card_ids)
+        .execute()
+    )
+
+    cards_dict = {
+        card["phrase_front"].strip(): [card["phrase_back"].strip(), card["explanation"], card["id"]]
+        for card in res.data
+    }
+    st.session_state.flashcards = cards_dict

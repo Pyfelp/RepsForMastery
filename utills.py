@@ -2,6 +2,8 @@ import re
 from difflib import SequenceMatcher
 import json
 from pathlib import Path
+import pandas as pd
+import numpy as np
 
 def normalize(text: str) -> str:
     text = text.lower()
@@ -49,4 +51,42 @@ def del_mp3s():
         if file_path.is_file():
             file_path.unlink()  # Use unlink() to delete the file
 
-del_mp3s()
+
+
+def random_cards(df, antall_kort=10):
+    """Genererer en liste med card_id basert på lav score OG hvor lenge siden
+
+    det er forrige forsøk (gamle kort prioriteres).
+    """
+    # 1. Sørg for riktig tidsformat
+    df["tested_at"] = pd.to_datetime(df["tested_at"])
+
+    # 2. Finn nyeste forsøk per kort (vi bryr oss om hvor lenge siden *siste* tegn til liv var)
+    siste_forsok = df.sort_values("tested_at").groupby("card_id").last().reset_index()
+
+    # 3. Beregn alder i dager (eller timer) siden dette siste forsøket
+    naa = pd.Timestamp.now(tz="UTC")
+    siste_forsok["alder_dager"] = (naa - siste_forsok["tested_at"]).dt.total_seconds() / (3600 * 24)
+
+    # 4. Beregn feil_vekt (lavere score gir høyere vekt)
+    siste_forsok["feil_vekt"] = 1.0 - siste_forsok["score"]
+
+    # 5. Kombiner alder og feil (Additiv eller multiplikativ tilnærming)
+    # Vi legger til 1 på dager for å unngå at helt nye kort får 0 i tidsvekt.
+    # Her vil enten LANG TID eller LAV SCORE trekke prioriteringen opp.
+    siste_forsok["prioritet"] = (siste_forsok["alder_dager"] + 1) * (siste_forsok["feil_vekt"] + 0.5)
+
+    # Hvis appen er helt ny og alle har 0 i prioritet, gi alle lik sjanse
+    if siste_forsok["prioritet"].sum() == 0:
+        siste_forsok["prioritet"] = 1.0
+
+    # 6. Gjør om til sannsynligheter som summerer seg til 1
+    sannsynlighet = siste_forsok["prioritet"] / siste_forsok["prioritet"].sum()
+
+    # 7. Trekk unike kort basert på denne nye sannsynligheten
+    antall_trekk = min(antall_kort, len(siste_forsok))
+    valgte_kort = np.random.choice(
+        siste_forsok["card_id"], size=antall_trekk, replace=False, p=sannsynlighet
+    )
+
+    return list(valgte_kort)

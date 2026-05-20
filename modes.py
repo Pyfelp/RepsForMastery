@@ -3,7 +3,7 @@ import random
 from audio import rec_audio, play_russian
 from utills import parse_flashcards, similarity
 from db import submit_ai_key, get_user_data, get_deck, save_new_deck, remove_decks, remove_cards, get_cards_of_decks, \
-    save_ai_explanation, add_attempt
+    save_ai_explanation, add_attempt, prepare_random_deck
 from ai import explain_phrase
 def goto(mode:str):
     st.session_state.mode = mode
@@ -14,6 +14,7 @@ def unload_flashcards():
 def clear_memory():
     st.session_state.submitted = False
     st.session_state.user_input = ""
+    st.session_state.attempt_added = False
     st.session_state.score = 0
 def prep_cards():
     cards = list(st.session_state.flashcards.items())
@@ -209,6 +210,10 @@ def prep():
     if st.button("Create new deck"):
         st.session_state.load_from_start = True
         goto("load")
+    if st.button("Create random deck based on your historic attempts"):
+        prepare_random_deck()
+        st.session_state.load_from_start = True
+        st.rerun()
 
     if len(flashcards) != 0:
         st.success(f"Loaded {len(flashcards)} cards")
@@ -276,7 +281,7 @@ def train():
                 st.rerun()
 
         elif st.session_state.submitted == True:
-            st.text_input("Your answer", value=st.session_state.user_input)
+            user_input = st.text_input("Your answer", value=st.session_state.user_input)
             st.markdown('''
 
 
@@ -302,7 +307,9 @@ def train():
             else:
                 st.error("❌ Incorrect")
             st.session_state.stats[english] = score
-            add_attempt(russian[2], russian[0], st.session_state.user_input, score, "writing")
+            if st.session_state.attempt_added == False:
+                add_attempt(russian[2], russian[0], user_input, score, "speaking")
+                st.session_state.attempt_added == True
 
 
 
@@ -343,7 +350,9 @@ def train():
                 st.warning("🟡 Almost")
             elif score > 0:
                 st.error("❌ Not correct")
-            add_attempt(russian[2], russian[0], user_input, score, "speaking")
+            if st.session_state.attempt_added == False:
+                add_attempt(russian[2], russian[0], user_input, score, "speaking")
+                st.session_state.attempt_added == True
     # -----------------------
     # 🔊 PRONUNCIATION
     # -----------------------

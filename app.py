@@ -51,6 +51,8 @@ if "tts_for_index" not in st.session_state:
     st.session_state.tts_for_index = None
 if "decks" not in st.session_state:
     st.session_state.decks = []
+if "attempt_added" not in st.session_state:
+    st.session_state.attempt_added = False
 
 # ---------------------------
 # Sidebar setting buttorns
