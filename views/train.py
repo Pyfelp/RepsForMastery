@@ -1,10 +1,11 @@
 import streamlit as st
-from modes import train
+from modes import train, goto
 
-if not st.session_state.get("cards"):
-    st.info("No deck loaded. Pick or create one first.")
-    if st.button("Go to menu"):
-        st.switch_page("views/prepare.py")
+has_selection = bool(st.session_state.get("selected_deck_ids")) or bool(st.session_state.get("flashcards"))
+if not has_selection:
+    st.info("Pick decks from **Decks** first.")
+    if st.button("Go to decks"):
+        goto("decks")
     st.stop()
 
 train()

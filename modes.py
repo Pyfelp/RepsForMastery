@@ -2,48 +2,62 @@ import streamlit as st
 import random
 from audio import rec_audio, play_russian
 from utills import parse_flashcards, similarity
-from db import submit_ai_key, get_user_data, get_deck, save_new_deck, remove_decks, remove_cards, get_cards_of_decks, \
-    save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, upload_deck_audio, \
-    get_deck_audio_bytes, deck_audio_exists
+from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
+    get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
+    save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, \
+    upload_deck_audio, get_deck_audio_bytes, deck_audio_exists
 from ai import explain_phrase
 from audio import build_deck_audio, join_deck_audios
+
 PAGE_PATHS = {
-    "prepare": "views/prepare.py",
+    "decks": "views/decks.py",
     "train": "views/train.py",
+    "listen": "views/listen.py",
     "load": "views/load_cards.py",
-    "manage_decks": "views/manage_decks.py",
     "get_ai": "views/get_ai.py",
 }
 
+
 def goto(mode: str):
     st.switch_page(PAGE_PATHS[mode])
+
+
 def unload_flashcards():
     st.session_state.flashcards = {}
+    st.session_state.cards = []
+    st.session_state.training_started = False
+
 
 def clear_memory():
     st.session_state.submitted = False
     st.session_state.user_input = ""
     st.session_state.attempt_added = False
     st.session_state.score = 0
+
+
 def prep_cards():
     cards = list(st.session_state.flashcards.items())
     if st.session_state.shuffle:
         random.shuffle(cards)
-
     st.session_state.cards = cards
     st.session_state.index = 0
     st.session_state.stats = {}
 
+
 def next_card():
     clear_memory()
-    if st.session_state.index < len(st.session_state.cards)-1:
+    if st.session_state.index < len(st.session_state.cards) - 1:
         st.session_state.index += 1
         if st.session_state.ui_answer:
-            st.session_state.ui_answer=""
+            st.session_state.ui_answer = ""
     else:
-        goto("prepare")
+        st.session_state.training_started = False
+        goto("decks")
+
+
 def input_change():
     st.session_state.submitted = True
+
 
 def load_cards():
     st.header("📥 Create a new deck")
@@ -52,7 +66,7 @@ def load_cards():
     st.markdown("""
 
 
-    Your training data must be in **JSON** format or **TXT** format.   
+    Your training data must be in **JSON** format or **TXT** format.
 
     **JSON example:**
     ```json
@@ -80,32 +94,24 @@ def load_cards():
     flashcards = None
 
     if input_method == "Paste/write":
-        raw_text = st.text_area(
-            "Paste JSON or text here",
-            height=200
-        )
-
+        raw_text = st.text_area("Paste JSON or text here", height=200)
         if raw_text:
             try:
                 flashcards = parse_flashcards(raw_text)
             except Exception as e:
                 st.error(f"Invalid input: {e}")
-
     else:
-        uploaded = st.file_uploader(
-            "Upload file",
-            type=["json", "txt"]
-        )
-
+        uploaded = st.file_uploader("Upload file", type=["json", "txt"])
         if uploaded:
             try:
                 content = uploaded.read().decode("utf-8")
                 flashcards = parse_flashcards(content)
             except Exception as e:
                 st.error(f"Invalid file: {e}")
+
     if st.button("Cancel"):
         unload_flashcards()
-        goto("prepare")
+        goto("decks")
 
     if flashcards:
         st.session_state.flashcards = flashcards
@@ -113,12 +119,11 @@ def load_cards():
             if deck_name:
                 if save_new_deck(deck_name):
                     st.session_state.deck = deck_name
-                    goto("prepare")
+                    unload_flashcards()
+                    goto("decks")
             else:
                 st.warning("Please provide a deck name.")
-    # ---------------------------
-    # 2️⃣ PREPARE SESSION CARDS
-    # ---------------------------
+
 
 def get_ai():
     st.markdown("""
@@ -129,12 +134,10 @@ def get_ai():
     * **Generate personalized decks** based on weaknesses in your training sessions.
     """)
 
-    # Viktig informasjon om oppsett og kostnader
     st.markdown("""
     > :warning: **Requirements:** To use these features, you need an OpenAI account with an active credit balance (a minimum of $5–$10 will last for a very long time).
     """)
 
-    # Inntastingsfelt for API-nøkkel med hjelpetekst
     ai_key = st.text_input(
         label="OpenAI API Key",
         type="password",
@@ -144,7 +147,9 @@ def get_ai():
         submit_ai_key(ai_key)
 
     if st.button("Back"):
-        goto("prepare")
+        goto("decks")
+
+
 def _render_multi_deck_audio_panel(deck_names: list, deck_ids: list):
     st.subheader(f"🔊 Deck audio — {len(deck_ids)} decks")
 
@@ -221,119 +226,156 @@ def _render_deck_audio_panel(deck_name: str, deck_id: int):
                 st.rerun()
 
 
-def manage_decks():
-    st.header("🗂 Manage decks")
+def decks_view():
+    st.header("🗂 Decks")
     get_user_data()
-    decks_dict = st.session_state.get("decks") or []
+    decks_dict = st.session_state.get("decks") or {}
+
     if not decks_dict:
-        st.info("You have no decks yet.")
-        if st.button("Back"):
-            goto("prepare")
+        st.info("You have no decks yet. Create one from **New deck**.")
+        if st.session_state.get("ai_user"):
+            if st.button("Create deck from weak cards"):
+                prepare_random_deck()
+                st.session_state.selected_deck_ids = []
+                st.session_state.selected_deck_names = []
+                st.session_state.selected_card_ids = []
+                st.session_state.training_started = False
+                goto("train")
         return
 
-
-    selected_names = st.multiselect("Decks", decks_dict.keys())
+    selected_names = st.multiselect("Decks", list(decks_dict.keys()))
     selected_deck_ids = [decks_dict[name] for name in selected_names]
 
+    cards_options = {}
+    selected_card_ids = []
     if selected_deck_ids:
-        col1, col2 = st.columns(2)
-        if col1.button("Edit decks"):
-            st.session_state.editing_decks = selected_deck_ids
-        if col2.button("Delete decks"):
+        cards_options = get_cards_of_decks(selected_deck_ids)
+        if cards_options:
+            card_selected_keys = st.multiselect(
+                "Cards (optional — leave empty to train on all)",
+                list(cards_options.keys()),
+            )
+            selected_card_ids = [cards_options[k] for k in card_selected_keys]
+
+    st.session_state.selected_deck_ids = selected_deck_ids
+    st.session_state.selected_deck_names = selected_names
+    st.session_state.selected_card_ids = selected_card_ids
+
+    if selected_deck_ids:
+        cols = st.columns(4)
+        if cols[0].button("🧠 Train", use_container_width=True):
+            st.session_state.training_started = False
+            goto("train")
+        if cols[1].button("🔊 Listen", use_container_width=True):
+            goto("listen")
+        if selected_card_ids:
+            if cols[2].button("Remove cards", use_container_width=True):
+                if remove_cards(selected_card_ids):
+                    st.success(f"Removed {len(selected_card_ids)} card(s).")
+                    st.rerun()
+        if cols[3].button("🗑 Delete decks", use_container_width=True):
             if remove_decks(selected_deck_ids):
-                st.session_state.pop("editing_decks", None)
                 st.success(f"Deleted {len(selected_deck_ids)} deck(s).")
                 unload_flashcards()
                 st.rerun()
 
-    if len(selected_deck_ids) == 1:
-        _render_deck_audio_panel(selected_names[0], selected_deck_ids[0])
-    elif len(selected_deck_ids) > 1:
-        _render_multi_deck_audio_panel(selected_names, selected_deck_ids)
-
-    editing = st.session_state.get("editing_decks")
-    if editing:
-        cards_options = get_cards_of_decks(editing)
-        if not cards_options:
-            st.info("No cards in the selected decks.")
-        else:
-            card_selected_keys = st.multiselect("Cards", list(cards_options.keys()))
-            card_ids = [cards_options[k] for k in card_selected_keys]
-            if card_ids and st.button("Remove cards"):
-                if remove_cards(card_ids):
-                    st.success(f"Removed {len(card_ids)} card(s).")
-                    unload_flashcards()
-                    st.rerun()
-
-    if st.button("Back to menu"):
-        st.session_state.pop("editing_decks", None)
-        goto("prepare")
-def prep():
-    flashcards = st.session_state.flashcards
-    get_user_data()
+    st.divider()
+    if st.session_state.get("ai_user") or True:
+        if st.button("✨ Create training set from your weak cards"):
+            prepare_random_deck()
+            st.session_state.selected_deck_ids = []
+            st.session_state.selected_deck_names = []
+            st.session_state.selected_card_ids = []
+            st.session_state.training_started = False
+            goto("train")
 
 
+def listen_view():
+    st.header("🔊 Listen")
+    deck_ids = st.session_state.get("selected_deck_ids") or []
+    deck_names = st.session_state.get("selected_deck_names") or []
 
-    if st.session_state.decks:
-        decks = st.session_state.get("decks")
-        option_list = decks.keys()
-        selected_deck = st.selectbox("Which deck will you train on?", option_list)
-        selected_index = decks[selected_deck]
+    if not deck_ids:
+        st.info("Pick decks from the **Decks** view first.")
+        if st.button("Back to decks"):
+            goto("decks")
+        return
 
-
-        if st.button("Load deck"):
-            st.session_state.flashcards = get_deck(selected_index)
-            st.session_state.deck = selected_deck
-            st.session_state.load_from_start = True
-            goto("prepare")
+    if len(deck_ids) == 1:
+        _render_deck_audio_panel(deck_names[0], deck_ids[0])
     else:
-        st.markdown("""
-        ### You have no decks to train on.
-        """)
-    if st.button("Create new deck"):
-        st.session_state.load_from_start = True
-        goto("load")
-    if st.button("Create random deck based on your historic attempts"):
-        prepare_random_deck()
-        st.session_state.load_from_start = True
+        _render_multi_deck_audio_panel(deck_names, deck_ids)
+
+    if st.button("Back to decks"):
+        goto("decks")
+
+
+def _load_training_flashcards():
+    card_ids = st.session_state.get("selected_card_ids") or []
+    deck_ids = st.session_state.get("selected_deck_ids") or []
+    if card_ids:
+        st.session_state.flashcards = get_cards_by_ids(card_ids)
+    elif deck_ids:
+        st.session_state.flashcards = get_cards_for_decks(deck_ids)
+    # else: already set (e.g. weakness deck via prepare_random_deck)
+
+
+def _train_setup():
+    deck_names = st.session_state.get("selected_deck_names") or []
+    card_ids = st.session_state.get("selected_card_ids") or []
+    deck_ids = st.session_state.get("selected_deck_ids") or []
+    has_preloaded = bool(st.session_state.get("flashcards")) and not deck_ids and not card_ids
+
+    st.header("🧠 Set up training")
+    if deck_names:
+        st.caption(f"Decks: {', '.join(deck_names)}")
+    if card_ids:
+        st.caption(f"Training on {len(card_ids)} selected card(s).")
+    elif has_preloaded:
+        st.caption(f"Training on {len(st.session_state.flashcards)} weak card(s).")
+    elif deck_ids:
+        st.caption("Training on all cards from the selected deck(s).")
+    else:
+        st.info("Pick decks from the **Decks** view first.")
+        if st.button("Back to decks"):
+            goto("decks")
+        return
+
+    mode = st.radio(
+        "Training mode",
+        ["Practice", "✍️ Writing", "🎤 Speaking"],
+        horizontal=True,
+    )
+    st.session_state.shuffle = st.checkbox("Shuffle cards", value=st.session_state.get("shuffle", True))
+
+    col1, col2 = st.columns(2)
+    if col1.button("Start", type="primary"):
+        if not has_preloaded:
+            _load_training_flashcards()
+        if not st.session_state.flashcards:
+            st.warning("No cards to train on.")
+            return
+        st.session_state.routine = mode
+        clear_memory()
+        prep_cards()
+        st.session_state.training_started = True
         st.rerun()
-
-    if len(flashcards) != 0:
-        st.success(f"Loaded {len(flashcards)} cards")
-
-        col1, col2, col3 = st.columns(3)
-        but1 = col1.button("Practice")
-
-        but2 = col2.button("Challenge")
-
-        challenge_mode = col3.radio(
-            "Training mode",
-            ["✍️ Writing", "🎤 Speaking"],
-            horizontal=True
-        )
-        st.session_state.shuffle = col3.checkbox("Shuffle cards", value=True)
-        if but1:
-            st.session_state.routine = "Practice"
-            clear_memory()
-            prep_cards()
-            goto("train")
-        if but2:
-            st.session_state.routine = challenge_mode
-            clear_memory()
-            prep_cards()
-            goto("train")
-
-
+    if col2.button("Back to decks"):
+        goto("decks")
 
 
 def train():
+    if not st.session_state.get("training_started"):
+        _train_setup()
+        return
+
     st.header("🧠 Put in some reps!")
     st.write(st.session_state.routine)
     current_index = st.session_state.index
     english, russian = st.session_state.cards[current_index]
     deck_size = len(st.session_state.flashcards)
 
-    st.write(f"**Card: {current_index + 1}**")
+    st.write(f"**Card: {current_index + 1} / {deck_size}**")
 
     st.markdown(
         f"<div style='font-size:24px; font-weight:600'>{english}</div>",
@@ -344,11 +386,7 @@ def train():
 
     ''')
 
-    # -----------------------
-    # ✍️ WRITING MODE
-    # -----------------------
     if st.session_state.routine == "✍️ Writing":
-
         if st.session_state.submitted == False:
             user_input = st.text_input("Your answer", key="ui_answer", autocomplete='off')
             if user_input:
@@ -380,7 +418,6 @@ def train():
             ''')
 
             score = st.session_state.score
-
             if score > 0.8:
                 st.success("✅ Correct")
             elif score > 0.6:
@@ -391,22 +428,17 @@ def train():
                 st.error("❌ Incorrect")
             st.session_state.stats[english] = score
             if st.session_state.attempt_added == False:
-                add_attempt(russian[2], russian[0], user_input, score, "speaking")
-                st.session_state.attempt_added == True
-
-
+                add_attempt(russian[2], russian[0], user_input, score, "writing")
+                st.session_state.attempt_added = True
 
     elif st.session_state.routine == "Practice":
         st.markdown(
             f"<div style='font-size:24px; font-weight:600'>Solution: {russian[0]}</div>",
             unsafe_allow_html=True
         )
-    # -----------------------
-    # 🎤 SPEAKING MODE (STUB)
-    # -----------------------
+
     elif st.session_state.routine == "🎤 Speaking":
         if st.session_state.submitted == False:
-
             user_input = rec_audio()
             if user_input:
                 st.session_state.score = similarity(user_input, russian[0])
@@ -435,10 +467,8 @@ def train():
                 st.error("❌ Not correct")
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "speaking")
-                st.session_state.attempt_added == True
-    # -----------------------
-    # 🔊 PRONUNCIATION
-    # -----------------------
+                st.session_state.attempt_added = True
+
     if st.session_state.routine == "Practice" or st.session_state.submitted == True:
         st.write("🔊 Listen to pronunciation:")
 
@@ -446,10 +476,8 @@ def train():
             st.session_state.tts_audio = play_russian(russian[0])
         st.session_state.tts_for_index = current_index
         if st.session_state.tts_audio:
-            st.audio(st.session_state.tts_audio)     # format="audio/aac"
-        # ---------------------------
-        # ⃣ AI
-        # ---------------------------
+            st.audio(st.session_state.tts_audio)
+
         st.divider()
 
         ai_explanation = ""
@@ -463,48 +491,32 @@ def train():
         else:
             ai_explanation = russian[1]
 
-        if len(ai_explanation) < 30:
+        if not ai_explanation:
+            pass
+        elif len(ai_explanation) < 30:
             st.markdown(ai_explanation)
         else:
             ai_explanation = ai_explanation.replace("-", "\n-")
             with st.expander("💡 View Explanation & Grammar Notes"):
-                # Vi splitter teksten ved '**Grammar Notes:**' for å gi dem ulike visuelle bokser
                 if "**Grammar Notes:**" in ai_explanation:
                     gloser, grammatikk = ai_explanation.split("**Grammar Notes:**")
-
                     st.markdown("### 🔤 Word-by-Word Breakdown")
                     st.markdown(gloser.strip())
-
-                    # Vi legger grammatikken i en egen infoboks for visuell kontrast
                     st.info(grammatikk.strip(), icon="📝")
                 else:
-                    # Fallback hvis AI-en formaterte teksten litt annerledes en gang
                     st.markdown(ai_explanation)
-
-
-
 
     col1, col2 = st.columns(2)
 
-    if col1.button("Back to menu"):
-        goto("prepare")
+    if col1.button("Back to decks"):
+        st.session_state.training_started = False
+        goto("decks")
     if current_index + 1 < deck_size:
-        col2.button(
-            "Next ➡",
-            key="but_next",
-            on_click=next_card
-        )
+        col2.button("Next ➡", key="but_next", on_click=next_card)
 
-
-    # ---------------------------
-    # 4️⃣ PROGRESS TRACKING
-    # ---------------------------
     if st.session_state.stats and st.session_state.routine != "Practice":
         st.divider()
         st.header("📊 Progress")
         if len(st.session_state.stats) > 0:
             avg_score = sum(st.session_state.stats.values()) / len(st.session_state.stats)
             st.metric("Average score", f"{avg_score:.2f}")
-
-        weak = [k for k, v in st.session_state.stats.items() if v < 0.7]
-

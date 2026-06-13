@@ -106,6 +106,48 @@ def get_deck(deck_id: int) -> dict:
     }
     return cards_dict
 
+def get_cards_for_decks(deck_ids: list) -> dict:
+    """Return flashcards dict {phrase_front: [phrase_back, explanation, id]} for all cards in the given decks."""
+    client = get_supabase()
+    if not deck_ids:
+        return {}
+    try:
+        res = (
+            client.table("cards")
+            .select("id, phrase_front, phrase_back, explanation")
+            .in_("deck_id", deck_ids)
+            .execute()
+        )
+        return {
+            row["phrase_front"].strip(): [row["phrase_back"].strip(), row["explanation"], row["id"]]
+            for row in (res.data or [])
+        }
+    except Exception as e:
+        st.error(f"Could not load cards: {e}")
+        return {}
+
+
+def get_cards_by_ids(card_ids: list) -> dict:
+    """Return flashcards dict for a specific set of card ids."""
+    client = get_supabase()
+    if not card_ids:
+        return {}
+    try:
+        res = (
+            client.table("cards")
+            .select("id, phrase_front, phrase_back, explanation")
+            .in_("id", card_ids)
+            .execute()
+        )
+        return {
+            row["phrase_front"].strip(): [row["phrase_back"].strip(), row["explanation"], row["id"]]
+            for row in (res.data or [])
+        }
+    except Exception as e:
+        st.error(f"Could not load cards: {e}")
+        return {}
+
+
 def get_cards_of_decks(deck_ids: list) -> dict:
     """Return {phrase_front: card_id} for all cards in the given decks."""
     client = get_supabase()
