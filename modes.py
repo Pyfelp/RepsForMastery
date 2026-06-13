@@ -3,11 +3,20 @@ import random
 from audio import rec_audio, play_russian
 from utills import parse_flashcards, similarity
 from db import submit_ai_key, get_user_data, get_deck, save_new_deck, remove_decks, remove_cards, get_cards_of_decks, \
-    save_ai_explanation, add_attempt, prepare_random_deck
+    save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, upload_deck_audio, \
+    get_deck_audio_bytes, deck_audio_exists
 from ai import explain_phrase
-def goto(mode:str):
-    st.session_state.mode = mode
-    st.rerun()
+from audio import build_deck_audio, join_deck_audios
+PAGE_PATHS = {
+    "prepare": "views/prepare.py",
+    "train": "views/train.py",
+    "load": "views/load_cards.py",
+    "manage_decks": "views/manage_decks.py",
+    "get_ai": "views/get_ai.py",
+}
+
+def goto(mode: str):
+    st.switch_page(PAGE_PATHS[mode])
 def unload_flashcards():
     st.session_state.flashcards = {}
 
@@ -136,6 +145,82 @@ def get_ai():
 
     if st.button("Back"):
         goto("prepare")
+def _render_multi_deck_audio_panel(deck_names: list, deck_ids: list):
+    st.subheader(f"🔊 Deck audio — {len(deck_ids)} decks")
+
+    name_by_id = dict(zip(deck_ids, deck_names))
+    missing = [did for did in deck_ids if not deck_audio_exists(did)]
+
+    if missing:
+        st.caption(
+            f"{len(deck_ids) - len(missing)} of {len(deck_ids)} decks have audio. "
+            f"Missing: {', '.join(name_by_id[d] for d in missing)}."
+        )
+        if st.button(f"Generate audio for {len(missing)} missing deck(s)"):
+            progress = st.progress(0.0)
+            for i, did in enumerate(missing, start=1):
+                with st.spinner(f"Rendering {name_by_id[did]}…"):
+                    cards = get_deck_cards_ordered(did)
+                    if not cards:
+                        st.warning(f"{name_by_id[did]} has no cards — skipped.")
+                    else:
+                        audio_bytes = build_deck_audio(cards)
+                        if not upload_deck_audio(did, audio_bytes):
+                            st.error(f"Failed to upload {name_by_id[did]}.")
+                            return
+                progress.progress(i / len(missing))
+            st.success("All missing decks generated.")
+            st.rerun()
+        return
+
+    cache_key = f"joined_audio_{'_'.join(str(d) for d in sorted(deck_ids))}"
+    joined = st.session_state.get(cache_key)
+    if joined is None:
+        with st.spinner("Stitching decks together…"):
+            blobs = [get_deck_audio_bytes(did) for did in deck_ids]
+            blobs = [b for b in blobs if b]
+            joined = join_deck_audios(blobs)
+            st.session_state[cache_key] = joined
+
+    if not joined:
+        st.warning("Could not load audio for the selected decks.")
+        return
+
+    loop = st.toggle("🔁 Loop", value=False, key=f"loop_multi_{'_'.join(str(d) for d in sorted(deck_ids))}")
+    st.audio(joined, format="audio/mpeg", loop=loop)
+    st.caption(f"Playing: {' → '.join(deck_names)}")
+
+
+def _render_deck_audio_panel(deck_name: str, deck_id: int):
+    st.subheader(f"🔊 Deck audio — {deck_name}")
+    exists = deck_audio_exists(deck_id)
+
+    if exists:
+        audio_bytes = get_deck_audio_bytes(deck_id)
+        if audio_bytes:
+            loop = st.toggle("🔁 Loop", value=False, key=f"loop_{deck_id}")
+            st.audio(audio_bytes, format="audio/mpeg", loop=loop)
+        regenerate = st.button("Regenerate audio")
+    else:
+        st.caption("No audio yet for this deck.")
+        regenerate = st.button("Generate audio")
+
+    if regenerate:
+        cards = get_deck_cards_ordered(deck_id)
+        if not cards:
+            st.warning("Deck has no cards.")
+            return
+        with st.spinner(f"Rendering audio for {len(cards)} cards…"):
+            audio_bytes = build_deck_audio(cards)
+        with st.spinner("Uploading…"):
+            if upload_deck_audio(deck_id, audio_bytes):
+                for k in list(st.session_state.keys()):
+                    if k.startswith("joined_audio_"):
+                        st.session_state.pop(k, None)
+                st.success("Audio saved.")
+                st.rerun()
+
+
 def manage_decks():
     st.header("🗂 Manage decks")
     get_user_data()
@@ -161,6 +246,11 @@ def manage_decks():
                 unload_flashcards()
                 st.rerun()
 
+    if len(selected_deck_ids) == 1:
+        _render_deck_audio_panel(selected_names[0], selected_deck_ids[0])
+    elif len(selected_deck_ids) > 1:
+        _render_multi_deck_audio_panel(selected_names, selected_deck_ids)
+
     editing = st.session_state.get("editing_decks")
     if editing:
         cards_options = get_cards_of_decks(editing)
@@ -177,14 +267,7 @@ def manage_decks():
 
     if st.button("Back to menu"):
         st.session_state.pop("editing_decks", None)
-
-        if st.session_state.prev_mode ==     st.session_state.mode:
-            goto("prepare")
-        elif st.session_state.prev_mode != "prepare":
-            get_user_data()
-            goto(st.session_state.prev_mode)
-        else:
-            goto("prepare")
+        goto("prepare")
 def prep():
     flashcards = st.session_state.flashcards
     get_user_data()

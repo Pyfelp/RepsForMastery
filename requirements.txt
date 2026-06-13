@@ -1,7 +1,10 @@
-streamlit>=1.35
+streamlit>=1.36
 edge-tts==7.2.7
 faster-whisper
 streamlit-mic-recorder
+pydub
+langdetect
+audioop-lts; python_version >= "3.13"
 python-Levenshtein
 numpy
 openai

@@ -1,4 +1,5 @@
 import random
+from typing import Optional
 
 import streamlit as st
 from supabase import create_client, Client
@@ -201,6 +202,71 @@ def save_ai_explanation(card_id: int, explanation: str) -> bool:
     except Exception as e:
         st.error(f"Could not save explanation: {e}")
         return False
+
+DECK_AUDIO_BUCKET = "deck_audio"
+
+
+def _deck_audio_path(deck_id: int) -> str:
+    user = st.session_state.get("user")
+    return f"{user['id']}/{deck_id}.mp3"
+
+
+def deck_audio_exists(deck_id: int) -> bool:
+    user = st.session_state.get("user")
+    if not user:
+        return False
+    client = get_supabase()
+    try:
+        listing = client.storage.from_(DECK_AUDIO_BUCKET).list(user["id"])
+        return any(f.get("name") == f"{deck_id}.mp3" for f in (listing or []))
+    except Exception:
+        return False
+
+
+def upload_deck_audio(deck_id: int, audio_bytes: bytes) -> bool:
+    user = st.session_state.get("user")
+    if not user:
+        st.error("You must be signed in.")
+        return False
+    client = get_supabase()
+    path = _deck_audio_path(deck_id)
+    bucket = client.storage.from_(DECK_AUDIO_BUCKET)
+    file_options = {"content-type": "audio/mpeg", "cache-control": "no-cache"}
+    try:
+        if deck_audio_exists(deck_id):
+            try:
+                bucket.remove([path])
+            except Exception:
+                pass
+        bucket.upload(path=path, file=audio_bytes, file_options=file_options)
+        return True
+    except Exception as e:
+        st.error(f"Could not upload audio: {e}")
+        return False
+
+
+def get_deck_audio_bytes(deck_id: int) -> Optional[bytes]:
+    user = st.session_state.get("user")
+    if not user:
+        return None
+    client = get_supabase()
+    try:
+        return client.storage.from_(DECK_AUDIO_BUCKET).download(_deck_audio_path(deck_id))
+    except Exception:
+        return None
+
+
+def get_deck_cards_ordered(deck_id: int) -> list[tuple[str, str]]:
+    client = get_supabase()
+    res = (
+        client.table("cards")
+        .select("phrase_front, phrase_back")
+        .eq("deck_id", deck_id)
+        .order("id")
+        .execute()
+    )
+    return [(c["phrase_front"].strip(), c["phrase_back"].strip()) for c in (res.data or [])]
+
 
 def prepare_random_deck():
     client = get_supabase()
