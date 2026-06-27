@@ -6,7 +6,7 @@ from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
     save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, \
     upload_deck_audio, get_deck_audio_bytes, deck_audio_exists, \
-    get_user_preferences, save_user_preferences
+    get_user_preferences, save_user_preferences, rename_deck, merge_decks
 from ai import explain_phrase
 from audio import build_deck_audio, join_deck_audios
 from languages import LANGUAGES, language_name
@@ -324,6 +324,39 @@ def decks_view():
                 st.success(f"Deleted {len(selected_deck_ids)} deck(s).")
                 unload_flashcards()
                 st.rerun()
+
+        if len(selected_deck_ids) == 1:
+            with st.expander("✏️ Rename deck"):
+                current_name = selected_names[0]
+                new_name = st.text_input("New name", value=current_name, key="rename_input")
+                if st.button("Save name", key="rename_save"):
+                    if new_name.strip() and new_name.strip() != current_name:
+                        if rename_deck(selected_deck_ids[0], new_name):
+                            st.success("Deck renamed.")
+                            st.rerun()
+                    else:
+                        st.warning("Pick a different, non-empty name.")
+        else:
+            with st.expander(f"🔗 Merge {len(selected_deck_ids)} decks"):
+                default_name = selected_names[0]
+                merged_name = st.text_input(
+                    "Name for the merged deck",
+                    value=default_name,
+                    key="merge_input",
+                )
+                st.caption(
+                    "All cards will be combined into a single deck. "
+                    "Existing deck audio for the merged decks will be cleared."
+                )
+                if st.button("Merge", key="merge_save"):
+                    target_id = merge_decks(selected_deck_ids, merged_name)
+                    if target_id:
+                        st.success(f"Merged into '{merged_name.strip()}'.")
+                        unload_flashcards()
+                        st.session_state.selected_deck_ids = []
+                        st.session_state.selected_deck_names = []
+                        st.session_state.selected_card_ids = []
+                        st.rerun()
 
     st.divider()
     if st.session_state.get("ai_user") or True:

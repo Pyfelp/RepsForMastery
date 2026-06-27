@@ -207,6 +207,51 @@ def get_cards_of_decks(deck_ids: list) -> dict:
         st.error(f"Could not load cards: {e}")
         return {}
 
+def rename_deck(deck_id: int, new_name: str) -> bool:
+    client = get_supabase()
+    new_name = (new_name or "").strip()
+    if not new_name:
+        st.error("Deck name cannot be empty.")
+        return False
+    try:
+        client.table("decks").update({"name": new_name}).eq("id", deck_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Could not rename deck: {e}")
+        return False
+
+
+def merge_decks(deck_ids: list, new_name: str) -> Optional[int]:
+    """Merge ``deck_ids`` into one deck. The first id is the target; cards from
+    the others are reassigned, the source decks are deleted, and the target is
+    renamed to ``new_name``. Returns the target deck id on success."""
+    if not deck_ids or len(deck_ids) < 2:
+        return None
+    new_name = (new_name or "").strip()
+    if not new_name:
+        st.error("Merged deck needs a name.")
+        return None
+    client = get_supabase()
+    target_id = deck_ids[0]
+    source_ids = deck_ids[1:]
+    try:
+        client.table("cards").update({"deck_id": target_id}).in_("deck_id", source_ids).execute()
+        client.table("decks").delete().in_("id", source_ids).execute()
+        client.table("decks").update({"name": new_name}).eq("id", target_id).execute()
+        # Source audio is now orphaned and target audio is stale — drop both.
+        user = st.session_state.get("user")
+        if user:
+            try:
+                paths = [f"{user['id']}/{did}.mp3" for did in deck_ids]
+                client.storage.from_(DECK_AUDIO_BUCKET).remove(paths)
+            except Exception:
+                pass
+        return target_id
+    except Exception as e:
+        st.error(f"Could not merge decks: {e}")
+        return None
+
+
 def remove_decks(deck_ids: list) -> bool:
     client = get_supabase()
     if not deck_ids:
