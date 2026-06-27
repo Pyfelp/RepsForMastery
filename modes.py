@@ -1,13 +1,15 @@
 import streamlit as st
 import random
-from audio import rec_audio, play_russian
+from audio import rec_audio, play_target
 from utills import parse_flashcards, similarity
 from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
     save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, \
-    upload_deck_audio, get_deck_audio_bytes, deck_audio_exists
+    upload_deck_audio, get_deck_audio_bytes, deck_audio_exists, \
+    get_user_preferences, save_user_preferences
 from ai import explain_phrase
 from audio import build_deck_audio, join_deck_audios
+from languages import LANGUAGES, language_name
 
 PAGE_PATHS = {
     "decks": "views/decks.py",
@@ -15,6 +17,7 @@ PAGE_PATHS = {
     "listen": "views/listen.py",
     "load": "views/load_cards.py",
     "get_ai": "views/get_ai.py",
+    "preferences": "views/preferences.py",
 }
 
 
@@ -224,6 +227,49 @@ def _render_deck_audio_panel(deck_name: str, deck_id: int):
                         st.session_state.pop(k, None)
                 st.success("Audio saved.")
                 st.rerun()
+
+
+def preferences_view():
+    st.header("🌐 Language settings")
+
+    current_native = st.session_state.get("native_lang")
+    current_target = st.session_state.get("lang")
+    has_prefs = bool(current_native and current_target)
+
+    codes = list(LANGUAGES.keys())
+
+    def _index(code, fallback):
+        return codes.index(code) if code in codes else codes.index(fallback)
+
+    native = st.selectbox(
+        "Your native language",
+        codes,
+        format_func=lambda c: LANGUAGES[c],
+        index=_index(current_native, "en"),
+    )
+    target = st.selectbox(
+        "Language you want to learn",
+        codes,
+        format_func=lambda c: LANGUAGES[c],
+        index=_index(current_target, "ru" if native != "ru" else "en"),
+    )
+
+    if native == target:
+        st.warning("Native and target language must differ.")
+        return
+
+    if st.button("Save", type="primary"):
+        if save_user_preferences(native, target):
+            st.session_state.native_lang = native
+            st.session_state.lang = target
+            st.session_state.decks = {}
+            unload_flashcards()
+            st.success("Languages saved.")
+            st.rerun()
+
+    if has_prefs:
+        if st.button("Back to decks"):
+            goto("decks")
 
 
 def decks_view():
@@ -473,7 +519,7 @@ def train():
         st.write("🔊 Listen to pronunciation:")
 
         if st.session_state.tts_for_index != current_index or current_index == 0:
-            st.session_state.tts_audio = play_russian(russian[0])
+            st.session_state.tts_audio = play_target(russian[0])
         st.session_state.tts_for_index = current_index
         if st.session_state.tts_audio:
             st.audio(st.session_state.tts_audio)
@@ -482,7 +528,12 @@ def train():
 
         ai_explanation = ""
         if st.button("Ask AI for explanation"):
-            ai_explanation = explain_phrase(russian[0], st.session_state.ai_api)
+            ai_explanation = explain_phrase(
+                russian[0],
+                st.session_state.ai_api,
+                target_language=language_name(st.session_state.get("lang")),
+                native_language=language_name(st.session_state.get("native_lang")),
+            )
             if save_ai_explanation(russian[2], ai_explanation):
                 st.success("The explanation has been saved")
                 russian[1] = ai_explanation

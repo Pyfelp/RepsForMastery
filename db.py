@@ -42,6 +42,48 @@ def submit_ai_key(ai_key: str) -> bool:
     st.success("API key saved.")
     return True
 
+def get_user_preferences():
+    """Return {'native_language', 'target_language'} for the signed-in user, or None."""
+    user = st.session_state.get("user")
+    if not user:
+        return None
+    client = get_supabase()
+    try:
+        res = (
+            client.table("user_preferences")
+            .select("native_language, target_language")
+            .eq("user_id", user["id"])
+            .maybe_single()
+            .execute()
+        )
+        if res and res.data:
+            return res.data
+    except Exception as e:
+        st.error(f"Could not load language preferences: {e}")
+    return None
+
+
+def save_user_preferences(native_language: str, target_language: str) -> bool:
+    user = st.session_state.get("user")
+    if not user:
+        st.error("You must be signed in.")
+        return False
+    client = get_supabase()
+    try:
+        client.table("user_preferences").upsert(
+            {
+                "user_id": user["id"],
+                "native_language": native_language,
+                "target_language": target_language,
+            },
+            on_conflict="user_id",
+        ).execute()
+        return True
+    except Exception as e:
+        st.error(f"Could not save language preferences: {e}")
+        return False
+
+
 def get_user_data():
     client = get_supabase()
     user = st.session_state.get("user")
@@ -315,7 +357,7 @@ def prepare_random_deck():
     res = (
         client.table("card_attempts")
         .select("tested_at", "user_answer", "correct_answer", "score", "card_id")
-        .eq("language", "ru")
+        .eq("language", st.session_state.lang)
         .execute()
     )
     df = pd.DataFrame(res.data)
