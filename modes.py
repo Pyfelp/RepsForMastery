@@ -4,7 +4,8 @@ from audio import rec_audio, play_target
 from utills import parse_flashcards, similarity
 from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
-    save_ai_explanation, add_attempt, prepare_random_deck, get_deck_cards_ordered, \
+    save_ai_explanation, add_attempt, add_streak_to_card, update_user_vocabulary, \
+    prepare_random_deck, get_deck_cards_ordered, \
     upload_deck_audio, get_deck_audio_bytes, deck_audio_exists, \
     get_user_preferences, save_user_preferences, rename_deck, merge_decks
 from ai import explain_phrase
@@ -590,6 +591,9 @@ def train():
             st.session_state.stats[english] = score
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "writing")
+                add_streak_to_card(russian[2], score > 0.8)
+                if st.session_state.get("user"):
+                    update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
                 st.session_state.attempt_added = True
 
     elif st.session_state.routine == "🎤 Speaking":
@@ -622,6 +626,9 @@ def train():
                 st.error("❌ Not correct")
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "speaking")
+                add_streak_to_card(russian[2], score > 0.8)
+                if st.session_state.get("user"):
+                    update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
                 st.session_state.attempt_added = True
 
     if st.session_state.submitted == True:
