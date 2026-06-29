@@ -7,8 +7,10 @@ from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove
     save_ai_explanation, add_attempt, add_streak_to_card, update_user_vocabulary, \
     prepare_random_deck, get_deck_cards_ordered, \
     upload_deck_audio, get_deck_audio_bytes, deck_audio_exists, \
-    get_user_preferences, save_user_preferences, rename_deck, merge_decks
-from ai import explain_phrase
+    get_user_preferences, save_user_preferences, rename_deck, merge_decks, \
+    get_vocabulary_count, get_user_progress_history, save_user_progress, \
+    get_card_attempts_for_analysis
+from ai import explain_phrase, analyze_user_performance
 from audio import build_deck_audio, join_deck_audios
 from languages import LANGUAGES, language_name
 
@@ -20,6 +22,7 @@ PAGE_PATHS = {
     "load": "views/load_cards.py",
     "get_ai": "views/get_ai.py",
     "preferences": "views/preferences.py",
+    "progress": "views/progress.py",
 }
 
 
@@ -687,3 +690,101 @@ def train():
         if len(st.session_state.stats) > 0:
             avg_score = sum(st.session_state.stats.values()) / len(st.session_state.stats)
             st.metric("Average score", f"{avg_score:.2f}")
+
+
+def show_progress():
+    from languages import FLAGS, language_name as _lang_name
+
+    user = st.session_state.get("user")
+    if not user:
+        st.error("You must be signed in.")
+        return
+
+    target_lang = st.session_state.get("lang")
+    native_lang = st.session_state.get("native_lang")
+    if not target_lang:
+        st.warning("Set your target language in Settings first.")
+        return
+
+    flag = FLAGS.get(target_lang, "🌐")
+    st.header(f"{flag} My Progress — {_lang_name(target_lang)}")
+
+    history = get_user_progress_history(user["id"], target_lang)
+    latest = history[0] if history else None
+
+    # ── Top metrics row ──────────────────────────────────────────────
+    vocab_now = get_vocabulary_count(user["id"], target_lang)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Current Level", latest["current_level"] if latest else "—")
+
+    prev_vocab = latest.get("previous_vocabulary_count") if latest else None
+    vocab_delta = (vocab_now - prev_vocab) if prev_vocab is not None else None
+    col2.metric("Mastered Words", vocab_now, delta=vocab_delta)
+
+    if latest:
+        updated = latest["updated_at"]
+        if isinstance(updated, str):
+            updated = updated[:16].replace("T", " ")
+        col3.metric("Last Evaluated", updated)
+
+    st.divider()
+
+    # ── Run evaluation ───────────────────────────────────────────────
+    ai_key = st.session_state.get("ai_api", "")
+    if not ai_key:
+        st.info("Add your OpenAI API key in **Settings → AI settings** to enable AI evaluation.")
+    else:
+        if st.button("Run AI Evaluation", type="primary"):
+            with st.spinner("Fetching your practice history…"):
+                attempts = get_card_attempts_for_analysis(user["id"], target_lang)
+
+            if not attempts:
+                st.warning("No practice attempts found yet. Complete some training sessions first.")
+            else:
+                with st.spinner(f"Analysing {len(attempts)} attempts with AI…"):
+                    try:
+                        analysis = analyze_user_performance(
+                            openai_key=ai_key,
+                            native_lang=_lang_name(native_lang or "English"),
+                            target_lang=_lang_name(target_lang),
+                            vocab_count=vocab_now,
+                            attempts_data=attempts,
+                        )
+                        saved = save_user_progress(
+                            native_language=native_lang or "",
+                            target_language=target_lang,
+                            current_level=analysis.current_level,
+                            vocabulary_count=vocab_now,
+                            speaking_vs_writing=analysis.speaking_vs_writing_summary,
+                            primary_weaknesses=[w.model_dump() for w in analysis.primary_weaknesses],
+                            next_steps=analysis.next_steps,
+                        )
+                        if saved:
+                            st.success("Evaluation complete!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"AI evaluation failed: {e}")
+
+    # ── Latest evaluation results ────────────────────────────────────
+    if latest:
+        st.subheader("Latest Evaluation")
+        st.caption(latest.get("speaking_vs_writing", ""))
+
+        weaknesses = latest.get("primary_weaknesses") or []
+        if weaknesses:
+            st.markdown("**Primary Weaknesses**")
+            for i, w in enumerate(weaknesses, 1):
+                method_icon = "✍️" if w.get("input_method") == "writing" else "🗣️"
+                with st.expander(f"{method_icon} {i}. {w.get('topic', '')}"):
+                    st.write(w.get("description", ""))
+                    col_a, col_b = st.columns(2)
+                    col_a.error(f"❌ {w.get('example_user_answer', '')}")
+                    col_b.success(f"✅ {w.get('example_correct_answer', '')}")
+
+        next_steps = latest.get("next_steps") or []
+        if next_steps:
+            st.markdown("**Next Steps**")
+            for step in next_steps:
+                st.markdown(f"- {step}")
+    else:
+        st.info("Run your first AI evaluation to see your progress.")

@@ -1,10 +1,10 @@
-import random
+
+import json
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 import streamlit as st
 from supabase import create_client, Client
-from utills import random_cards
 import pandas as pd
 @st.cache_resource
 def get_supabase() -> Client:
@@ -552,9 +552,7 @@ def get_deck_cards_ordered(deck_id: int) -> list[tuple[str, str]]:
     return [(c["phrase_front"].strip(), c["phrase_back"].strip()) for c in (res.data or [])]
 
 
-import pandas as pd
-import streamlit as st
-from datetime import datetime, timedelta, timezone
+
 
 
 def prepare_random_deck():
@@ -633,3 +631,90 @@ def prepare_random_deck():
     }
 
     st.session_state.flashcards = cards_dict
+
+
+def get_vocabulary_count(user_id: str, language: str) -> int:
+    """Call the supabase RPC to get the user's mastered vocabulary count."""
+    client = get_supabase()
+    try:
+        res = client.rpc(
+            "get_vocabulary_count",
+            {"target_user_id": user_id, "target_language": language},
+        ).execute()
+        return int(res.data or 0)
+    except Exception as e:
+        st.error(f"Could not fetch vocabulary count: {e}")
+        return 0
+
+
+def get_user_progress_history(user_id: str, language: str) -> list:
+    """Return all progress evaluations for a user+language, oldest first."""
+    client = get_supabase()
+    try:
+        res = client.rpc(
+            "get_user_progress_history",
+            {"p_user_id": user_id, "p_target_language": language},
+        ).execute()
+        rows = res.data or []
+        for row in rows:
+            if isinstance(row.get("primary_weaknesses"), str):
+                row["primary_weaknesses"] = json.loads(row["primary_weaknesses"])
+            if isinstance(row.get("next_steps"), str):
+                row["next_steps"] = json.loads(row["next_steps"])
+        return rows
+    except Exception as e:
+        st.error(f"Could not fetch progress history: {e}")
+        return []
+
+
+def save_user_progress(
+    native_language: str,
+    target_language: str,
+    current_level: str,
+    vocabulary_count: int,
+    speaking_vs_writing: str,
+    primary_weaknesses: list,
+    next_steps: list,
+) -> bool:
+    """Insert a new progress evaluation row via RPC (bypasses RLS)."""
+    user = st.session_state.get("user")
+    if not user:
+        st.error("You must be signed in.")
+        return False
+    client = get_supabase()
+    try:
+        client.rpc(
+            "insert_user_progress",
+            {
+                "p_user_id": user["id"],
+                "p_native_language": native_language,
+                "p_target_language": target_language,
+                "p_current_level": current_level,
+                "p_vocabulary_count": vocabulary_count,
+                "p_speaking_vs_writing": speaking_vs_writing,
+                "p_primary_weaknesses": primary_weaknesses,
+                "p_next_steps": next_steps,
+            },
+        ).execute()
+        return True
+    except Exception as e:
+        st.error(f"Could not save progress: {e}")
+        return False
+
+
+def get_card_attempts_for_analysis(user_id: str, language: str) -> list:
+    """Fetch card attempts for AI analysis, ordered chronologically."""
+    client = get_supabase()
+    try:
+        res = (
+            client.table("card_attempts")
+            .select("user_answer, correct_answer, is_correct, mode")
+            .eq("user_id", user_id)
+            .eq("language", language)
+            .order("tested_at", desc=False)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        st.error(f"Could not fetch attempts: {e}")
+        return []
