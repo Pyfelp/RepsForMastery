@@ -552,25 +552,84 @@ def get_deck_cards_ordered(deck_id: int) -> list[tuple[str, str]]:
     return [(c["phrase_front"].strip(), c["phrase_back"].strip()) for c in (res.data or [])]
 
 
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta, timezone
+
+
 def prepare_random_deck():
     client = get_supabase()
-    res = (
-        client.table("card_attempts")
-        .select("tested_at", "user_answer", "correct_answer", "score", "card_id")
-        .eq("language", st.session_state.lang)
-        .execute()
-    )
-    df = pd.DataFrame(res.data)
-    card_ids = random_cards(df)
+
+    # 1. Fetch all relevant cards from the 'cards' table
     res = (
         client.table("cards")
-        .select("id, phrase_front, phrase_back, explanation")
-        .in_("id", card_ids)
+        .select("id, phrase_front, phrase_back, explanation, last_tested_at, streak")
+        # .eq("language", st.session_state.lang)  # Uncomment if you filter by language
         .execute()
     )
 
+    if not res.data:
+        st.session_state.flashcards = {}
+        return
+
+    # Store cards in a main pool dataframe
+    pool = pd.DataFrame(res.data)
+
+    # Ensure correct datetime format and handle missing (NaN) values in streak
+    pool['last_tested_at'] = pd.to_datetime(pool['last_tested_at'])
+    pool['streak'] = pool['streak'].fillna(0).astype(int)
+
+    # Define the time threshold (20 hours ago)
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=20)
+
+    selected_cards = []
+
+    # Helper function to sample cards and immediately remove them from the pool
+    def sample_and_remove(filter_condition, num_requested):
+        nonlocal pool
+        if num_requested <= 0 or pool.empty:
+            return []
+
+        # Filter potential candidates based on the segment condition
+        candidates = pool[filter_condition]
+
+        if candidates.empty:
+            return []
+
+        # Determine the maximum possible number of cards to sample
+        num_to_sample = min(len(candidates), num_requested)
+        sampled = candidates.sample(n=num_to_sample)
+
+        # Permanently remove the selected cards from the main pool by ID
+        pool = pool[~pool['id'].isin(sampled['id'])]
+
+        return sampled.to_dict('records')
+
+    # --- SEGMENT 1: > 20 hours ago AND streak == 0 (Target: 6 cards) ---
+    older_than_20h = pool['last_tested_at'].isna() | (pool['last_tested_at'] < time_threshold)
+    selected_cards.extend(sample_and_remove(older_than_20h & (pool['streak'] == 0), 6))
+
+    # --- SEGMENT 2: > 20 hours ago AND streak between 1 and 5 (Target: max 4 cards) ---
+    remaining_slots = 10 - len(selected_cards)
+    max_from_seg2 = min(4, remaining_slots)
+
+    older_than_20h = pool['last_tested_at'].isna() | (pool['last_tested_at'] < time_threshold)
+    selected_cards.extend(
+        sample_and_remove(older_than_20h & (pool['streak'] >= 1) & (pool['streak'] <= 5), max_from_seg2))
+
+    # --- SEGMENT 3: > 20 hours ago regardless of streak (Fill up to 10) ---
+    remaining_slots = 10 - len(selected_cards)
+    older_than_20h = pool['last_tested_at'].isna() | (pool['last_tested_at'] < time_threshold)
+    selected_cards.extend(sample_and_remove(older_than_20h, remaining_slots))
+
+    # --- SEGMENT 4: All remaining cards regardless of time and streak (Last resort fallback) ---
+    remaining_slots = 10 - len(selected_cards)
+    selected_cards.extend(sample_and_remove(pd.Series(True, index=pool.index), remaining_slots))
+
+    # 3. Build the final flashcards dictionary for session_state
     cards_dict = {
         card["phrase_front"].strip(): [card["phrase_back"].strip(), card["explanation"], card["id"]]
-        for card in res.data
+        for card in selected_cards
     }
+
     st.session_state.flashcards = cards_dict
