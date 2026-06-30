@@ -58,7 +58,7 @@ def auth_gate() -> bool:
     if st.session_state.get("user"):
         return True
 
-    st.title("🇷🇺 Reps for Mastery")
+    st.title("🌐 Reps for Mastery")
     tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
 
     with tab_login:
