@@ -557,12 +557,13 @@ def get_deck_cards_ordered(deck_id: int) -> list[tuple[str, str]]:
 
 def prepare_random_deck():
     client = get_supabase()
+    lang = st.session_state.get("lang")
 
-    # 1. Fetch all relevant cards from the 'cards' table
+    # 1. Fetch cards joined with decks to filter by language
     res = (
         client.table("cards")
-        .select("id, phrase_front, phrase_back, explanation, last_tested_at, streak")
-        # .eq("language", st.session_state.lang)  # Uncomment if you filter by language
+        .select("id, phrase_front, phrase_back, explanation, last_tested_at, streak, decks!inner(language)")
+        .eq("decks.language", lang)
         .execute()
     )
 
