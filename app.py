@@ -68,14 +68,14 @@ if not has_prefs:
 else:
     decks_page = st.Page("views/decks.py", title="Decks", icon="🗂", default=True)
     train_page = st.Page("views/train.py", title="Train", icon="🧠")
+    study_page = st.Page("views/study.py", title="Study", icon="📖")
     listen_page = st.Page("views/listen.py", title="Listen", icon="🔊")
     load_page = st.Page("views/load_cards.py", title="New deck", icon="📥")
     ai_page = st.Page("views/get_ai.py", title="AI settings", icon="🤖")
     progress_page = st.Page("views/progress.py", title="Progress", icon="📈")
-
     sections = {
         "Decks": [decks_page, load_page],
-        "Session": [train_page, listen_page],
+        "Session": [train_page, study_page, listen_page],
         "Progress": [progress_page],
         "Settings": [ai_page, prefs_page],
     }

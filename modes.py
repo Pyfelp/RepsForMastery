@@ -460,6 +460,37 @@ def study_view():
 
     st.divider()
 
+    ai_explanation = ""
+    if st.button("Ask AI for explanation"):
+        ai_explanation = explain_phrase(
+            back_data[0],
+            st.session_state.ai_api,
+            target_language=language_name(st.session_state.get("lang")),
+            native_language=language_name(st.session_state.get("native_lang")),
+        )
+        if save_ai_explanation(back_data[2], ai_explanation):
+            st.success("The explanation has been saved")
+            back_data[1] = ai_explanation
+        else:
+            st.error("Error saving the explanation")
+    else:
+        ai_explanation = back_data[1]
+
+    if not ai_explanation:
+        pass
+    elif len(ai_explanation) < 30:
+        st.markdown(ai_explanation)
+    else:
+        ai_explanation = ai_explanation.replace("-", "\n-")
+        with st.expander("💡 View Explanation & Grammar Notes"):
+            if "**Grammar Notes:**" in ai_explanation:
+                gloser, grammatikk = ai_explanation.split("**Grammar Notes:**")
+                st.markdown("### 🔤 Word-by-Word Breakdown")
+                st.markdown(gloser.strip())
+                st.info(grammatikk.strip(), icon="📝")
+            else:
+                st.markdown(ai_explanation)
+
     col1, col2 = st.columns(2)
     if col1.button("Back to decks"):
         st.session_state.study_started = False

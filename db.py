@@ -604,6 +604,11 @@ def prepare_random_deck():
 
         return sampled.to_dict('records')
 
+    # =====================================================================
+    # ENDRING: Filtrer ut helt nye kort (der last_tested_at er tom/NULL)
+    # =====================================================================
+    pool = pool.dropna(subset=['last_tested_at'])
+
     # --- SEGMENT 1: > 20 hours ago AND streak == 0 (Target: 6 cards) ---
     older_than_20h = pool['last_tested_at'].isna() | (pool['last_tested_at'] < time_threshold)
     selected_cards.extend(sample_and_remove(older_than_20h & (pool['streak'] == 0), 6))
