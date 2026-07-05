@@ -30,6 +30,18 @@ def goto(mode: str):
     st.switch_page(PAGE_PATHS[mode])
 
 
+def _highlight_correct_words(correct: str, user_answer: str) -> str:
+    from utills import normalize
+    user_words = set(normalize(user_answer).split())
+    parts = []
+    for word in correct.split():
+        if normalize(word) in user_words:
+            parts.append(f"<span style='color:#4CAF50'>{word}</span>")
+        else:
+            parts.append(word)
+    return " ".join(parts)
+
+
 def unload_flashcards():
     st.session_state.flashcards = {}
     st.session_state.cards = []
@@ -604,8 +616,9 @@ def train():
 
             ''')
             st.markdown('**Solution:**')
+            highlighted = _highlight_correct_words(russian[0], st.session_state.user_input)
             st.markdown(
-                f"<div style='font-size:24px; font-weight:600'>{russian[0]}</div>",
+                f"<div style='font-size:24px; font-weight:600'>{highlighted}</div>",
                 unsafe_allow_html=True
             )
             st.markdown('''
@@ -649,7 +662,11 @@ def train():
             score = st.session_state.score
             user_input = st.session_state.user_input
             st.write(f"You said: **{user_input}**")
-            st.write(f"Correct: **{russian[0]}**")
+            highlighted = _highlight_correct_words(russian[0], user_input)
+            st.markdown(
+                f"Correct: <span style='font-weight:600; font-size:16px'>{highlighted}</span>",
+                unsafe_allow_html=True
+            )
             st.write(f"Score: **{score:.2f}**")
 
             if score > 0.8:
