@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import random
 from audio import rec_audio, play_target
@@ -13,6 +14,11 @@ from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove
 from ai import explain_phrase, analyze_user_performance, evaluate_translation
 from audio import build_deck_audio, join_deck_audios
 from languages import LANGUAGES, language_name
+
+_REMY_DIR = os.path.join(os.path.dirname(__file__), "remy_pngs")
+REMY_THINKING = os.path.join(_REMY_DIR, "Remy_thinking.png")
+REMY_GOOD_JOB = os.path.join(_REMY_DIR, "Remy_Good_job.png")
+REMY_THUMBS_UP = os.path.join(_REMY_DIR, "Remy_thumbs_up.png")
 
 PAGE_PATHS = {
     "decks": "views/decks.py",
@@ -147,13 +153,19 @@ def load_cards():
 
 
 def get_ai():
-    st.markdown("""
-    ## AI Functionality
-    Enabling AI features will allow you to:
-    * **Explain complex sentences** instantly.
-    * **Translate** words or sentences from your native language.
-    * **Generate personalized decks** based on weaknesses in your training sessions.
-    """)
+    col_img, col_text = st.columns([1, 3])
+    with col_img:
+        st.image(REMY_THUMBS_UP, width=130)
+    with col_text:
+        st.markdown("## Meet Remy, your AI coach!")
+        st.markdown(
+            "Remy uses AI to help you learn faster. Unlock Remy to get:"
+        )
+        st.markdown(
+            "* **Instant explanations** of complex sentences\n"
+            "* **Semantic answer grading** — word-order variations accepted\n"
+            "* **Personalised progress analysis** based on your training history"
+        )
 
     st.markdown("""
     > :warning: **Requirements:** To use these features, you need an OpenAI account with an active credit balance (a minimum of $5–$10 will last for a very long time).
@@ -474,20 +486,24 @@ def study_view():
     st.divider()
 
     ai_explanation = ""
-    if st.button("Ask AI for explanation"):
-        ai_explanation = explain_phrase(
-            back_data[0],
-            st.session_state.ai_api,
-            target_language=language_name(st.session_state.get("lang")),
-            native_language=language_name(st.session_state.get("native_lang")),
-        )
-        if save_ai_explanation(back_data[2], ai_explanation):
-            st.success("The explanation has been saved")
-            back_data[1] = ai_explanation
+    remy_col, btn_col = st.columns([1, 4])
+    with remy_col:
+        st.image(REMY_THINKING, width=80)
+    with btn_col:
+        if st.button("Ask Remy for an explanation"):
+            ai_explanation = explain_phrase(
+                back_data[0],
+                st.session_state.ai_api,
+                target_language=language_name(st.session_state.get("lang")),
+                native_language=language_name(st.session_state.get("native_lang")),
+            )
+            if save_ai_explanation(back_data[2], ai_explanation):
+                st.success("Remy saved the explanation!")
+                back_data[1] = ai_explanation
+            else:
+                st.error("Error saving the explanation")
         else:
-            st.error("Error saving the explanation")
-    else:
-        ai_explanation = back_data[1]
+            ai_explanation = back_data[1]
 
     if not ai_explanation:
         pass
@@ -495,7 +511,7 @@ def study_view():
         st.markdown(ai_explanation)
     else:
         ai_explanation = ai_explanation.replace("-", "\n-")
-        with st.expander("💡 View Explanation & Grammar Notes"):
+        with st.expander("💡 Remy's Explanation & Grammar Notes"):
             if "**Grammar Notes:**" in ai_explanation:
                 gloser, grammatikk = ai_explanation.split("**Grammar Notes:**")
                 st.markdown("### 🔤 Word-by-Word Breakdown")
@@ -641,29 +657,34 @@ def train():
             score = st.session_state.score
             ai_eval = st.session_state.get("ai_evaluation")
             effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
-            if score >= 0.95:
-                st.success("✅ Correct")
-            elif ai_eval is not None:
-                if ai_eval.is_acceptable:
+            feedback_col, remy_col = st.columns([4, 1])
+            with feedback_col:
+                if score >= 0.95:
                     st.success("✅ Correct")
-                    if ai_eval.feedback:
-                        st.info(ai_eval.feedback)
-                elif ai_eval.score > 0.6:
+                elif ai_eval is not None:
+                    if ai_eval.is_acceptable:
+                        st.success("✅ Correct")
+                        if ai_eval.feedback:
+                            st.info(ai_eval.feedback)
+                    elif ai_eval.score > 0.6:
+                        st.warning("🟡 Almost")
+                        if ai_eval.feedback:
+                            st.warning(ai_eval.feedback)
+                    else:
+                        st.error("❌ Incorrect")
+                        if ai_eval.feedback:
+                            st.error(ai_eval.feedback)
+                elif score > 0.8:
+                    st.success("✅ Correct")
+                elif score > 0.6:
                     st.warning("🟡 Almost")
-                    if ai_eval.feedback:
-                        st.warning(ai_eval.feedback)
+                elif score == 0:
+                    st.write("**No score**")
                 else:
                     st.error("❌ Incorrect")
-                    if ai_eval.feedback:
-                        st.error(ai_eval.feedback)
-            elif score > 0.8:
-                st.success("✅ Correct")
-            elif score > 0.6:
-                st.warning("🟡 Almost")
-            elif score == 0:
-                st.write("**No score**")
-            else:
-                st.error("❌ Incorrect")
+            with remy_col:
+                if effective_correct:
+                    st.image(REMY_GOOD_JOB, width=90)
             st.session_state.stats[english] = score
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "writing")
@@ -711,27 +732,32 @@ def train():
             st.write(f"Score: **{score:.2f}**")
 
             effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
-            if score >= 0.95:
-                st.success("✅ Good pronunciation!")
-            elif ai_eval is not None:
-                if ai_eval.is_acceptable:
+            feedback_col, remy_col = st.columns([4, 1])
+            with feedback_col:
+                if score >= 0.95:
                     st.success("✅ Good pronunciation!")
-                    if ai_eval.feedback:
-                        st.info(ai_eval.feedback)
-                elif ai_eval.score > 0.6:
+                elif ai_eval is not None:
+                    if ai_eval.is_acceptable:
+                        st.success("✅ Good pronunciation!")
+                        if ai_eval.feedback:
+                            st.info(ai_eval.feedback)
+                    elif ai_eval.score > 0.6:
+                        st.warning("🟡 Almost")
+                        if ai_eval.feedback:
+                            st.warning(ai_eval.feedback)
+                    else:
+                        st.error("❌ Not correct")
+                        if ai_eval.feedback:
+                            st.error(ai_eval.feedback)
+                elif score > 0.8:
+                    st.success("✅ Good pronunciation!")
+                elif score > 0.6:
                     st.warning("🟡 Almost")
-                    if ai_eval.feedback:
-                        st.warning(ai_eval.feedback)
-                else:
+                elif score > 0:
                     st.error("❌ Not correct")
-                    if ai_eval.feedback:
-                        st.error(ai_eval.feedback)
-            elif score > 0.8:
-                st.success("✅ Good pronunciation!")
-            elif score > 0.6:
-                st.warning("🟡 Almost")
-            elif score > 0:
-                st.error("❌ Not correct")
+            with remy_col:
+                if effective_correct:
+                    st.image(REMY_GOOD_JOB, width=90)
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "speaking")
                 add_streak_to_card(russian[2], effective_correct)
@@ -751,20 +777,24 @@ def train():
         st.divider()
 
         ai_explanation = ""
-        if st.button("Ask AI for explanation"):
-            ai_explanation = explain_phrase(
-                russian[0],
-                st.session_state.ai_api,
-                target_language=language_name(st.session_state.get("lang")),
-                native_language=language_name(st.session_state.get("native_lang")),
-            )
-            if save_ai_explanation(russian[2], ai_explanation):
-                st.success("The explanation has been saved")
-                russian[1] = ai_explanation
+        remy_col, btn_col = st.columns([1, 4])
+        with remy_col:
+            st.image(REMY_THINKING, width=80)
+        with btn_col:
+            if st.button("Ask Remy for an explanation"):
+                ai_explanation = explain_phrase(
+                    russian[0],
+                    st.session_state.ai_api,
+                    target_language=language_name(st.session_state.get("lang")),
+                    native_language=language_name(st.session_state.get("native_lang")),
+                )
+                if save_ai_explanation(russian[2], ai_explanation):
+                    st.success("Remy saved the explanation!")
+                    russian[1] = ai_explanation
+                else:
+                    st.error("Error saving the explanation")
             else:
-                st.error("Error saving the explanation")
-        else:
-            ai_explanation = russian[1]
+                ai_explanation = russian[1]
 
         if not ai_explanation:
             pass
@@ -772,7 +802,7 @@ def train():
             st.markdown(ai_explanation)
         else:
             ai_explanation = ai_explanation.replace("-", "\n-")
-            with st.expander("💡 View Explanation & Grammar Notes"):
+            with st.expander("💡 Remy's Explanation & Grammar Notes"):
                 if "**Grammar Notes:**" in ai_explanation:
                     gloser, grammatikk = ai_explanation.split("**Grammar Notes:**")
                     st.markdown("### 🔤 Word-by-Word Breakdown")
@@ -837,16 +867,25 @@ def show_progress():
     # ── Run evaluation ───────────────────────────────────────────────
     ai_key = st.session_state.get("ai_api", "")
     if not ai_key:
-        st.info("Add your OpenAI API key in **Settings → AI settings** to enable AI evaluation.")
+        no_key_col, remy_col = st.columns([4, 1])
+        with no_key_col:
+            st.info("Add your OpenAI API key in **Settings → AI settings** to unlock Remy's AI evaluation.")
+        with remy_col:
+            st.image(REMY_THUMBS_UP, width=90)
     else:
-        if st.button("Run AI Evaluation", type="primary"):
+        eval_col, remy_col = st.columns([4, 1])
+        with eval_col:
+            run_eval = st.button("🦜 Ask Remy to evaluate my progress", type="primary")
+        with remy_col:
+            st.image(REMY_THINKING, width=90)
+        if run_eval:
             with st.spinner("Fetching your practice history…"):
                 attempts = get_card_attempts_for_analysis(user["id"], target_lang)
 
             if not attempts:
                 st.warning("No practice attempts found yet. Complete some training sessions first.")
             else:
-                with st.spinner(f"Analysing {len(attempts)} attempts with AI…"):
+                with st.spinner(f"Remy is analysing {len(attempts)} attempts…"):
                     try:
                         analysis = analyze_user_performance(
                             openai_key=ai_key,
@@ -865,14 +904,14 @@ def show_progress():
                             next_steps=analysis.next_steps,
                         )
                         if saved:
-                            st.success("Evaluation complete!")
+                            st.success("Remy's evaluation complete!")
                             st.rerun()
                     except Exception as e:
-                        st.error(f"AI evaluation failed: {e}")
+                        st.error(f"Evaluation failed: {e}")
 
     # ── Latest evaluation results ────────────────────────────────────
     if latest:
-        st.subheader("Latest Evaluation")
+        st.subheader("🦜 Remy's Latest Evaluation")
         st.caption(latest.get("speaking_vs_writing", ""))
 
         weaknesses = latest.get("primary_weaknesses") or []
@@ -892,4 +931,4 @@ def show_progress():
             for step in next_steps:
                 st.markdown(f"- {step}")
     else:
-        st.info("Run your first AI evaluation to see your progress.")
+        st.info("Ask Remy to evaluate your progress for the first time!")
