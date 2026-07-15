@@ -34,6 +34,10 @@ def analyze_user_performance(
         "whether it was graded correct, and the input method ('writing' or 'speaking'). "
         "Identify recurring mistake patterns, evaluate their current language level, "
         "and separate issues caused by speech-to-text pronunciation problems vs. grammar/spelling. "
+        "When analyzing errors for languages with flexible word order (like Russian), "
+        "do not penalize variations in word order as a weakness unless it genuinely changes the meaning or violates grammatical rules. "
+        "If the user's answer conveys the exact same meaning and is grammatically acceptable in the target language, "
+        "treat it as correct in your qualitative analysis, even if it does not match the flashcard's exact baseline translation."
         f"All descriptive text inside the JSON fields must be written in {native_lang}."
     )
 
@@ -100,3 +104,44 @@ def explain_phrase(sentence, api_key, target_language: str = "", native_language
         return response.choices[0].message.content
     except Exception as e:
         return f"An error occurred: {e}"
+
+class AnswerEvaluation(BaseModel):
+    is_acceptable: bool = Field(description="True if the user's answer is a valid translation/meaning, even with typos or minor reordering.")
+    score: float = Field(description="A score between 0.0 and 1.0. 1.0 means perfect or completely acceptable alternative.")
+    feedback: str = Field(description="A very short, helpful correction in the user's native language if they made a mistake, otherwise empty.")
+
+
+def evaluate_translation(
+        openai_key: str,
+        user_answer: str,
+        correct_answer: str,
+        native_lang: str,
+        target_lang: str
+) -> AnswerEvaluation:
+    """Evaluates the user's answer against the correct answer using semantic comparison."""
+    client = OpenAI(api_key=openai_key)
+
+    prompt = f"""
+    You are a professional language teacher. Evaluate the user's translation attempt.
+    Target Language: {target_lang}
+    Correct Answer (Key): {correct_answer}
+    User's Answer: {user_answer}
+    User's Native Language (for feedback): {native_lang}
+
+    Criteria:
+    - If the meaning is completely correct but words are slightly reordered or a minor synonymous word is used, give a high score (0.85 - 1.0) and set is_acceptable to True.
+    - If there are minor spelling mistakes but the word is obvious, give a score around 0.8 and set is_acceptable to True.
+    - If the meaning changes substantially or a critical word is missing, set is_acceptable to False and lower the score.
+    - Keep feedback concise and constructive in the user's native language.
+    """
+
+    completion = client.beta.chat.completions.parse(
+        model="gpt-4o-mini",  # Rask og billig modell, perfekt for dette
+        messages=[
+            {"role": "system", "content": "You are a precise language evaluation assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        response_format=AnswerEvaluation,
+    )
+
+    return completion.choices[0].message.parsed

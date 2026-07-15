@@ -10,6 +10,13 @@ import pandas as pd
 def get_supabase() -> Client:
     return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
 
+def _parse_timestamp(s: str) -> datetime:
+    """Parse an ISO timestamp from Supabase, tolerating non-standard fractional-second lengths."""
+    s = s.replace("Z", "+00:00")
+    s = re.sub(r'\.(\d+)([+-])', lambda m: '.' + (m.group(1)[:6].ljust(6, '0')) + m.group(2), s)
+    return datetime.fromisoformat(s)
+
+
 def _looks_like_openai_key(key: str) -> bool:
     key = key.strip()
     return key.startswith("sk-") and len(key) >= 20
@@ -348,7 +355,7 @@ def add_streak_to_card(card_id: int, is_correct: bool) -> bool:
         if last_tested_str:
             # Supabase returns timestamps with timezone offset.
             # fromisoformat() handles this and creates a timezone-aware datetime object.
-            last_tested = datetime.fromisoformat(last_tested_str)
+            last_tested = _parse_timestamp(last_tested_str)
 
             # Calculate the total hours between now and the last test
             duration = now - last_tested
@@ -426,7 +433,7 @@ def update_user_vocabulary(correct_phrase: str, submitted_phrase: str, language:
                     # Word exists: Update stats
                     old_correct = record["correct_count"]
                     old_streak = record["current_streak"]
-                    last_tested_dt = datetime.fromisoformat(record["last_tested"].replace("Z", "+00:00"))
+                    last_tested_dt = _parse_timestamp(record["last_tested"])
 
                     # Only increase streak if it is a new day (at least 20 hours passed)
                     hours_since_last = (now - last_tested_dt).total_seconds() / 3600

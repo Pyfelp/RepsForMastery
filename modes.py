@@ -10,7 +10,7 @@ from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove
     get_user_preferences, save_user_preferences, rename_deck, merge_decks, \
     get_vocabulary_count, get_user_progress_history, save_user_progress, \
     get_card_attempts_for_analysis
-from ai import explain_phrase, analyze_user_performance
+from ai import explain_phrase, analyze_user_performance, evaluate_translation
 from audio import build_deck_audio, join_deck_audios
 from languages import LANGUAGES, language_name
 
@@ -53,6 +53,7 @@ def clear_memory():
     st.session_state.user_input = ""
     st.session_state.attempt_added = False
     st.session_state.score = 0
+    st.session_state.ai_evaluation = None
 
 
 def prep_cards():
@@ -598,8 +599,19 @@ def train():
         if st.session_state.submitted == False:
             user_input = st.text_input("Your answer", key="ui_answer", autocomplete='off')
             if user_input:
-                st.session_state.score = similarity(user_input, russian[0])
+                sim_score = similarity(user_input, russian[0])
+                st.session_state.score = sim_score
                 st.session_state.user_input = user_input
+                st.session_state.ai_evaluation = None
+                if sim_score < 0.95 and sim_score > 0 and st.session_state.get("ai_api"):
+                    native = language_name(st.session_state.get("native_lang", "")) or "English"
+                    target = language_name(st.session_state.get("lang", ""))
+                    try:
+                        st.session_state.ai_evaluation = evaluate_translation(
+                            st.session_state.ai_api, user_input, russian[0], native, target
+                        )
+                    except Exception:
+                        pass
                 st.session_state.submitted = True
                 st.rerun()
 
@@ -627,7 +639,24 @@ def train():
             ''')
 
             score = st.session_state.score
-            if score > 0.8:
+            ai_eval = st.session_state.get("ai_evaluation")
+            effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
+            if score >= 0.95:
+                st.success("✅ Correct")
+            elif ai_eval is not None:
+                if ai_eval.is_acceptable:
+                    st.success("✅ Correct")
+                    if ai_eval.feedback:
+                        st.info(ai_eval.feedback)
+                elif ai_eval.score > 0.6:
+                    st.warning("🟡 Almost")
+                    if ai_eval.feedback:
+                        st.warning(ai_eval.feedback)
+                else:
+                    st.error("❌ Incorrect")
+                    if ai_eval.feedback:
+                        st.error(ai_eval.feedback)
+            elif score > 0.8:
                 st.success("✅ Correct")
             elif score > 0.6:
                 st.warning("🟡 Almost")
@@ -638,7 +667,7 @@ def train():
             st.session_state.stats[english] = score
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "writing")
-                add_streak_to_card(russian[2], score > 0.8)
+                add_streak_to_card(russian[2], effective_correct)
                 if st.session_state.get("user"):
                     update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
                 st.session_state.attempt_added = True
@@ -647,8 +676,19 @@ def train():
         if st.session_state.submitted == False:
             user_input = rec_audio()
             if user_input:
-                st.session_state.score = similarity(user_input, russian[0])
+                sim_score = similarity(user_input, russian[0])
+                st.session_state.score = sim_score
                 st.session_state.user_input = user_input
+                st.session_state.ai_evaluation = None
+                if sim_score < 0.95 and sim_score > 0 and st.session_state.get("ai_api"):
+                    native = language_name(st.session_state.get("native_lang", "")) or "English"
+                    target = language_name(st.session_state.get("lang", ""))
+                    try:
+                        st.session_state.ai_evaluation = evaluate_translation(
+                            st.session_state.ai_api, user_input, russian[0], native, target
+                        )
+                    except Exception:
+                        pass
                 st.session_state.submitted = True
                 st.rerun()
 
@@ -660,6 +700,7 @@ def train():
 
         elif st.session_state.submitted == True:
             score = st.session_state.score
+            ai_eval = st.session_state.get("ai_evaluation")
             user_input = st.session_state.user_input
             st.write(f"You said: **{user_input}**")
             highlighted = _highlight_correct_words(russian[0], user_input)
@@ -669,7 +710,23 @@ def train():
             )
             st.write(f"Score: **{score:.2f}**")
 
-            if score > 0.8:
+            effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
+            if score >= 0.95:
+                st.success("✅ Good pronunciation!")
+            elif ai_eval is not None:
+                if ai_eval.is_acceptable:
+                    st.success("✅ Good pronunciation!")
+                    if ai_eval.feedback:
+                        st.info(ai_eval.feedback)
+                elif ai_eval.score > 0.6:
+                    st.warning("🟡 Almost")
+                    if ai_eval.feedback:
+                        st.warning(ai_eval.feedback)
+                else:
+                    st.error("❌ Not correct")
+                    if ai_eval.feedback:
+                        st.error(ai_eval.feedback)
+            elif score > 0.8:
                 st.success("✅ Good pronunciation!")
             elif score > 0.6:
                 st.warning("🟡 Almost")
@@ -677,7 +734,7 @@ def train():
                 st.error("❌ Not correct")
             if st.session_state.attempt_added == False:
                 add_attempt(russian[2], russian[0], user_input, score, "speaking")
-                add_streak_to_card(russian[2], score > 0.8)
+                add_streak_to_card(russian[2], effective_correct)
                 if st.session_state.get("user"):
                     update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
                 st.session_state.attempt_added = True
