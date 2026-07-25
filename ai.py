@@ -112,47 +112,55 @@ class AnswerEvaluation(BaseModel):
 
 
 def evaluate_translation(
-        openai_key: str,
-        user_answer: str,
-        correct_answer: str,
-        native_lang: str,
-        target_lang: str
+    openai_key: str,
+    user_answer: str,
+    correct_answer: str,
+    native_lang: str,
+    target_lang: str
 ) -> AnswerEvaluation:
     """Evaluates the user's answer against the correct answer using semantic comparison."""
     client = OpenAI(api_key=openai_key)
 
     prompt = f"""
-    You are a strict language teacher grading a translation exercise.
+    You are an encouraging but accurate language teacher grading a translation exercise.
 
     Target Language: {target_lang}
     Correct Answer: {correct_answer}
     Student's Answer: {user_answer}
     Feedback Language: {native_lang}
 
-    Your job: decide if the student's answer conveys the SAME MEANING as the correct answer.
+    Your core goal: Determine if the student understood and conveyed the CORRECT INTENDED MEANING, even if there are minor typos or harmless word-order differences.
 
-    STRICT RULES:
-    1. MEANING IS EVERYTHING. Even if only one word differs, if that word changes the meaning, the answer is WRONG.
-    2. ANTONYMS ARE ALWAYS WRONG. Words with opposite meanings (open/close, give/take, buy/sell, come/go, start/stop) are never acceptable substitutions, even if the rest of the sentence is identical.
-    3. Minor spelling errors on an otherwise correct word are acceptable (score ~0.8).
-    4. Word reordering that does not change meaning is acceptable.
-    5. If wrong, always provide a short, specific explanation in {native_lang} pointing to the exact mistake.
+    EVALUATION RULES:
+    1. MEANING & INTENT:
+       - If the student's answer conveys the same underlying meaning, mark it as acceptable (is_acceptable: true).
+       - Minor typos/spelling mistakes (e.g. "зокрить" instead of "закрыть") DO NOT change the meaning. Accept them with a score between 0.75 and 0.90, and mention the typo in the explanation.
 
-    EXAMPLE OF A WRONG ANSWER:
-    Correct: "Ольга, можешь закрыть окно?" (Can you close the window?)
-    Student: "Ольга, можешь открыть окно?" (Can you open the window?)
-    → is_acceptable: false, score: 0.1 — "открыть" (open) is the opposite of "закрыть" (close). These mean completely different things.
+    2. SEMANTIC ERRORS & ANTONYMS (WRONG):
+       - If a word replaces the original with a DIFFERENT or OPPOSITE meaning (e.g. "открыть" [open] instead of "закрыть" [close]), mark it as UNACCEPTABLE (is_acceptable: false, low score).
+       - Antonyms (open/close, buy/sell, give/take) are NEVER acceptable substitutions because they completely change the intent.
 
-    Now evaluate the student's answer above.
+    3. WORD ORDER & SYNTAX:
+       - Natural word reordering that retains meaning is fully acceptable (score 0.9 - 1.0).
+
+    4. FEEDBACK:
+       - Always give a brief, friendly explanation in {native_lang}.
+
+    EXAMPLES:
+    - Correct: "Ольга, можешь закрыть окно?" | Student: "Ольга, можешь открыть окно?" 
+      → is_acceptable: false, score: 0.1 (Reason: "открыть" means open, which is the opposite of close).
+    - Correct: "Ольга, можешь закрыть окно?" | Student: "Ольга, можешь зокрить окно?" 
+      → is_acceptable: true, score: 0.85 (Reason: Typo in "зокрить" -> "закрыть", but the meaning is clear).
+
+    Evaluate the student's answer now.
     """
 
     completion = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": (
-                "You are a strict language exam grader. Your only job is to judge whether the student's answer "
-                "has the EXACT SAME MEANING as the correct answer. One wrong word = wrong answer. "
-                "Never accept antonyms (opposite-meaning words) as correct, even if the sentence structure matches."
+                "You are an empathetic language teacher. You strictly penalize wrong meanings and antonyms, "
+                "but you are forgiving toward minor typos/spelling errors as long as the intended word and overall meaning are obvious."
             )},
             {"role": "user", "content": prompt}
         ],
