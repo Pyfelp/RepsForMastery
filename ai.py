@@ -122,23 +122,38 @@ def evaluate_translation(
     client = OpenAI(api_key=openai_key)
 
     prompt = f"""
-    You are a professional language teacher. Evaluate the user's translation attempt.
-    Target Language: {target_lang}
-    Correct Answer (Key): {correct_answer}
-    User's Answer: {user_answer}
-    User's Native Language (for feedback): {native_lang}
+    You are a strict language teacher grading a translation exercise.
 
-    Criteria:
-    - If the meaning is completely correct but words are slightly reordered or a minor synonymous word is used, give a high score (0.85 - 1.0) and set is_acceptable to True.
-    - If there are minor spelling mistakes but the word is obvious, give a score around 0.8 and set is_acceptable to True.
-    - If the meaning changes substantially or a critical word is missing, set is_acceptable to False and lower the score.
-    - Keep feedback concise and constructive in the user's native language.
+    Target Language: {target_lang}
+    Correct Answer: {correct_answer}
+    Student's Answer: {user_answer}
+    Feedback Language: {native_lang}
+
+    Your job: decide if the student's answer conveys the SAME MEANING as the correct answer.
+
+    STRICT RULES:
+    1. MEANING IS EVERYTHING. Even if only one word differs, if that word changes the meaning, the answer is WRONG.
+    2. ANTONYMS ARE ALWAYS WRONG. Words with opposite meanings (open/close, give/take, buy/sell, come/go, start/stop) are never acceptable substitutions, even if the rest of the sentence is identical.
+    3. Minor spelling errors on an otherwise correct word are acceptable (score ~0.8).
+    4. Word reordering that does not change meaning is acceptable.
+    5. If wrong, always provide a short, specific explanation in {native_lang} pointing to the exact mistake.
+
+    EXAMPLE OF A WRONG ANSWER:
+    Correct: "Ольга, можешь закрыть окно?" (Can you close the window?)
+    Student: "Ольга, можешь открыть окно?" (Can you open the window?)
+    → is_acceptable: false, score: 0.1 — "открыть" (open) is the opposite of "закрыть" (close). These mean completely different things.
+
+    Now evaluate the student's answer above.
     """
 
     completion = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",  # Rask og billig modell, perfekt for dette
+        model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a precise language evaluation assistant."},
+            {"role": "system", "content": (
+                "You are a strict language exam grader. Your only job is to judge whether the student's answer "
+                "has the EXACT SAME MEANING as the correct answer. One wrong word = wrong answer. "
+                "Never accept antonyms (opposite-meaning words) as correct, even if the sentence structure matches."
+            )},
             {"role": "user", "content": prompt}
         ],
         response_format=AnswerEvaluation,
