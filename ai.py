@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
@@ -106,9 +106,38 @@ def explain_phrase(sentence, api_key, target_language: str = "", native_language
         return f"An error occurred: {e}"
 
 class AnswerEvaluation(BaseModel):
-    is_acceptable: bool = Field(description="True if the user's answer is a valid translation/meaning, even with typos or minor reordering.")
-    score: float = Field(description="A score between 0.0 and 1.0. 1.0 means perfect or completely acceptable alternative.")
-    feedback: str = Field(description="A very short, helpful correction in the user's native language if they made a mistake, otherwise empty.")
+    is_acceptable: bool = Field(
+        description=(
+            "True when the essential intended meaning is preserved "
+            "and there is no major semantic error."
+        )
+    )
+
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Graded answer quality from 0.0 to 1.0."
+    )
+
+    feedback: str = Field(
+        description=(
+            "Brief feedback in the student's native language. "
+            "May be empty for a fully correct answer."
+        )
+    )
+
+    error_type: Literal[
+        "none",
+        "minor_spelling",
+        "minor_grammar",
+        "harmless_variation",
+        "missing_optional_information",
+        "missing_required_information",
+        "wrong_word",
+        "opposite_meaning",
+        "partial_meaning",
+        "unclear_meaning",
+    ]
 
 
 def evaluate_translation(
@@ -122,37 +151,155 @@ def evaluate_translation(
     client = OpenAI(api_key=openai_key)
 
     prompt = f"""
-    You are an encouraging but accurate language teacher grading a translation exercise.
+    You are a language-learning answer evaluator.
 
-    Target Language: {target_lang}
-    Correct Answer: {correct_answer}
-    Student's Answer: {user_answer}
-    Feedback Language: {native_lang}
+    Your task is to compare a student's answer with a reference answer in the target language.
 
-    Your core goal: Determine if the student understood and conveyed the CORRECT INTENDED MEANING, even if there are minor typos or harmless word-order differences.
+    The reference answer is one valid answer, but it is not necessarily the only valid way to express the intended meaning.
 
-    EVALUATION RULES:
-    1. MEANING & INTENT:
-       - If the student's answer conveys the same underlying meaning, mark it as acceptable (is_acceptable: true).
-       - Minor typos/spelling mistakes (e.g. "зокрить" instead of "закрыть") DO NOT change the meaning. Accept them with a score between 0.75 and 0.90, and mention the typo in the explanation.
+    INPUT
 
-    2. SEMANTIC ERRORS & ANTONYMS (WRONG):
-       - If a word replaces the original with a DIFFERENT or OPPOSITE meaning (e.g. "открыть" [open] instead of "закрыть" [close]), mark it as UNACCEPTABLE (is_acceptable: false, low score).
-       - Antonyms (open/close, buy/sell, give/take) are NEVER acceptable substitutions because they completely change the intent.
+    Target language: {target_lang}
+    Student's native language: {native_lang}
+    Reference answer: {correct_answer}
+    Student answer: {user_answer}
 
-    3. WORD ORDER & SYNTAX:
-       - Natural word reordering that retains meaning is fully acceptable (score 0.9 - 1.0).
+    CORE PRINCIPLE
+    
+    Evaluate whether the student's answer communicates the same essential meaning as the reference answer.
+    
+    Do not grade based only on exact wording or text similarity.
+    
+    EVALUATION PROCESS
 
-    4. FEEDBACK:
-       - Always give a brief, friendly explanation in {native_lang}.
+        1. Determine the essential meaning of the reference answer.
+        
+        2. Determine the meaning communicated by the student's answer.
+        
+        3. Compare the two meanings.
+        
+        4. Identify whether the differences are:
+        
+           * harmless variations,
+           * minor language errors,
+           * missing optional information,
+   * partially correct meaning,
+   * or meaning-changing errors.
 
-    EXAMPLES:
-    - Correct: "Ольга, можешь закрыть окно?" | Student: "Ольга, можешь открыть окно?" 
-      → is_acceptable: false, score: 0.1 (Reason: "открыть" means open, which is the opposite of close).
-    - Correct: "Ольга, можешь закрыть окно?" | Student: "Ольга, можешь зокрить окно?" 
-      → is_acceptable: true, score: 0.85 (Reason: Typo in "зокрить" -> "закрыть", but the meaning is clear).
+    ACCEPTABLE ANSWERS
+    
+    An answer may be accepted when:
+    
+    * It communicates the same essential meaning as the reference answer.
+    * The word order is different but remains grammatically possible or understandable.
+    * It omits a word that is not necessary for the essential meaning.
+    * It uses a synonym or another natural expression with the same meaning.
+    * It contains grammar errors, but the intended meaning remains clear.
+    * It contains minor spelling mistakes, provided the intended word is still unambiguous.
+    
+    Do not require the student to reproduce the reference answer exactly.
+    
+    MEANING-CHANGING ERRORS
+    
+    Do not accept an answer as fully correct when:
+    
+    * A word has been replaced with a word that has a different meaning.
+    * A similar-looking word is used, but it is actually a different word.
+    * An antonym or opposite action is used.
+    * The subject, object, action, negation, time, quantity, or another essential detail is changed.
+    * A necessary word is omitted and this changes or removes essential meaning.
+    * The answer only communicates part of the required meaning.
+    * The intended meaning cannot be determined reliably.
+    
+    Important:
+    
+    Visual or phonetic similarity between words is not evidence that they have the same meaning.
+    
+    For example, if the reference uses a word meaning “close” and the student uses a similar-looking word meaning “open”, this is a major semantic error, not a typo.
+    
+    GRAMMAR
+    
+    Grammar mistakes should not automatically make an answer incorrect.
+    
+    If the intended meaning is clear and matches the reference answer, the answer may still be accepted.
+    
+    Reduce the score according to how much the grammar error affects clarity, precision, or naturalness.
+    
+    SCORING
+    
+    Return a score between 0.0 and 1.0.
+    
+    Use these guidelines:
+    
+    * 0.95–1.00:
+      Same essential meaning. Fully correct or only harmless differences.
+    
+    * 0.85–0.94:
+      Same essential meaning, but with a minor spelling, grammar, or wording issue.
+    
+    * 0.70–0.84:
+      Meaning is mostly correct and clearly understandable, but there is a noticeable error or missing detail.
+    
+    * 0.40–0.69:
+      Partially correct. Some essential meaning is present, but an important detail is wrong or missing.
+    
+    * 0.10–0.39:
+      Mostly incorrect. Only a small part of the intended meaning is preserved.
+    
+    * 0.00–0.09:
+      Incorrect, unrelated, opposite in meaning, or impossible to interpret.
+    
+    ACCEPTANCE RULE
+    
+    Set `is_acceptable` to true when:
+    
+    * the essential meaning is preserved,
+    * the student's intended meaning is clear,
+    * and there is no major meaning-changing error.
+    
+    Normally, answers with a score of 0.70 or higher may be acceptable.
+    
+    However, a score above 0.70 does not override a major semantic error.
+    
+    For example, an answer containing the opposite action must not be accepted even if the rest of the sentence is correct.
+    
+    FEEDBACK
+    
+    Write the feedback in {native_lang}.
+    
+    The feedback must:
+    
+    * be brief,
+    * explain the most important difference,
+    * be encouraging but accurate,
+    * and avoid criticizing harmless word-order or wording variations.
+    
+    If the answer is fully correct, the feedback may be empty.
+    
+    If the answer is accepted with an error, briefly explain the error.
+    
+    If the answer is not accepted, identify the word or detail that changes the meaning.
+    
+    OUTPUT
+    
+    Return only the structured result with:
+    
+    * `is_acceptable`: boolean
+    * `score`: number between 0.0 and 1.0
+    * `feedback`: short feedback in {native_lang}
+    * `error_type`: one of:
+    
+      * `none`
+      * `minor_spelling`
+      * `minor_grammar`
+      * `harmless_variation`
+      * `missing_optional_information`
+      * `missing_required_information`
+      * `wrong_word`
+      * `opposite_meaning`
+      * `partial_meaning`
+      * `unclear_meaning`                           
 
-    Evaluate the student's answer now.
     """
 
     completion = client.beta.chat.completions.parse(

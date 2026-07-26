@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import random
 from audio import rec_audio, play_target
-from utills import parse_flashcards, similarity
+from utills import parse_flashcards, similarity, local_answer_evaluation
 from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
     save_ai_explanation, add_attempt, add_streak_to_card, update_user_vocabulary, \
@@ -58,7 +58,12 @@ def clear_memory():
     st.session_state.submitted = False
     st.session_state.user_input = ""
     st.session_state.attempt_added = False
-    st.session_state.score = 0
+
+    st.session_state.score = 0.0
+    st.session_state.answer_is_correct = False
+    st.session_state.answer_feedback = ""
+    st.session_state.answer_error_type = "none"
+    st.session_state.evaluation_source = ""
     st.session_state.ai_evaluation = None
 
 
@@ -544,6 +549,113 @@ def _load_training_flashcards():
         st.session_state.flashcards = get_cards_for_decks(deck_ids)
     # else: already set (e.g. weakness deck via prepare_random_deck)
 
+def _evaluate_user_answer(
+    user_answer: str,
+    correct_answer: str,
+) -> None:
+    """
+    Evaluates an answer and stores one final result in session state.
+
+    Evaluation order:
+    1. Safe local comparison
+    2. Semantic AI evaluation
+    3. Fallback similarity when AI is unavailable or fails
+    """
+    user_answer = (user_answer or "").strip()
+    correct_answer = (correct_answer or "").strip()
+
+    st.session_state.ai_evaluation = None
+    st.session_state.answer_feedback = ""
+    st.session_state.answer_error_type = "none"
+
+    # Empty answer
+    if not user_answer:
+        st.session_state.score = 0.0
+        st.session_state.answer_is_correct = False
+        st.session_state.answer_feedback = ""
+        st.session_state.answer_error_type = "unclear_meaning"
+        st.session_state.evaluation_source = "empty"
+        return
+
+    # ---------------------------------------------------------
+    # 1. SAFE LOCAL EVALUATION
+    # ---------------------------------------------------------
+    local_result = local_answer_evaluation(
+        user_answer,
+        correct_answer,
+    )
+
+    if local_result is not None:
+        is_acceptable, score = local_result
+
+        st.session_state.score = score
+        st.session_state.answer_is_correct = is_acceptable
+        st.session_state.answer_feedback = ""
+        st.session_state.answer_error_type = (
+            "none" if score == 1.0 else "minor_spelling"
+        )
+        st.session_state.evaluation_source = "local"
+        return
+
+    # ---------------------------------------------------------
+    # 2. SEMANTIC AI EVALUATION
+    # ---------------------------------------------------------
+    api_key = st.session_state.get("ai_api")
+
+    if api_key:
+        native = (
+            language_name(st.session_state.get("native_lang", ""))
+            or "English"
+        )
+        target = (
+            language_name(st.session_state.get("lang", ""))
+            or "the target language"
+        )
+
+        try:
+            ai_evaluation = evaluate_translation(
+                api_key,
+                user_answer,
+                correct_answer,
+                native,
+                target,
+            )
+
+            st.session_state.ai_evaluation = ai_evaluation
+            st.session_state.score = max(
+                0.0,
+                min(float(ai_evaluation.score), 1.0),
+            )
+            st.session_state.answer_is_correct = (
+                ai_evaluation.is_acceptable
+            )
+            st.session_state.answer_feedback = (
+                ai_evaluation.feedback or ""
+            )
+            st.session_state.answer_error_type = (
+                ai_evaluation.error_type
+            )
+            st.session_state.evaluation_source = "ai"
+            return
+
+        except Exception as e:
+            # During development you can show this:
+            # st.warning(f"AI evaluation failed: {e}")
+            pass
+
+    # ---------------------------------------------------------
+    # 3. FALLBACK WHEN AI IS UNAVAILABLE
+    # ---------------------------------------------------------
+    fallback_score = similarity(
+        user_answer,
+        correct_answer,
+    )
+
+    st.session_state.score = fallback_score
+    st.session_state.answer_is_correct = fallback_score >= 0.85
+    st.session_state.answer_feedback = ""
+    st.session_state.answer_error_type = "unclear_meaning"
+    st.session_state.evaluation_source = "similarity_fallback"
 
 def _train_setup():
     deck_names = st.session_state.get("selected_deck_names") or []
@@ -615,26 +727,19 @@ def train():
         if st.session_state.submitted == False:
             user_input = st.text_input("Your answer", key="ui_answer", autocomplete='off')
             if user_input:
-                sim_score = similarity(user_input, russian[0])
-                st.session_state.score = sim_score
                 st.session_state.user_input = user_input
-                st.session_state.ai_evaluation = None
-                if sim_score < 0.95 and sim_score > 0 and st.session_state.get("ai_api"):
-                    native = language_name(st.session_state.get("native_lang", "")) or "English"
-                    target = language_name(st.session_state.get("lang", ""))
-                    try:
-                        st.session_state.ai_evaluation = evaluate_translation(
-                            st.session_state.ai_api, user_input, russian[0], native, target
-                        )
-                    except Exception:
-                        pass
+
+                _evaluate_user_answer(
+                    user_answer=user_input,
+                    correct_answer=russian[0],
+                )
+
                 st.session_state.submitted = True
                 st.rerun()
 
             if st.button("Submit and see solution"):
                 score = 0
                 st.session_state.submitted = True
-                st.session_state.stats[english] = score
                 st.rerun()
 
         elif st.session_state.submitted == True:
@@ -655,40 +760,56 @@ def train():
             ''')
 
             score = st.session_state.score
-            ai_eval = st.session_state.get("ai_evaluation")
-            effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
+            is_correct = st.session_state.answer_is_correct
+            feedback = st.session_state.answer_feedback
+            error_type = st.session_state.answer_error_type
             feedback_col, remy_col = st.columns([4, 1])
             with feedback_col:
-                if score >= 0.95:
+                if is_correct and score >= 0.95:
                     st.success("✅ Correct")
-                elif ai_eval is not None:
-                    if ai_eval.is_acceptable:
-                        st.success("✅ Correct")
-                        if ai_eval.feedback:
-                            st.info(ai_eval.feedback)
-                    elif ai_eval.score > 0.6:
-                        st.warning("🟡 Almost")
-                        if ai_eval.feedback:
-                            st.warning(ai_eval.feedback)
-                    else:
-                        st.error("❌ Incorrect")
-                        if ai_eval.feedback:
-                            st.error(ai_eval.feedback)
-                elif score > 0.8:
-                    st.success("✅ Correct")
-                elif score > 0.6:
-                    st.warning("🟡 Almost")
+
+                elif is_correct:
+                    st.success(f"✅ Correct — {score:.0%}")
+
+                    if feedback:
+                        st.info(feedback)
+
+                elif score >= 0.40:
+                    st.warning(f"🟡 Partially correct — {score:.0%}")
+
+                    if feedback:
+                        st.warning(feedback)
+
                 elif score == 0:
-                    st.write("**No score**")
-                else:
                     st.error("❌ Incorrect")
+
+                    if feedback:
+                        st.error(feedback)
+
+                else:
+                    st.error(f"❌ Incorrect — {score:.0%}")
+
+                    if feedback:
+                        st.error(feedback)
+
             with remy_col:
-                if effective_correct:
+                if is_correct:
                     st.image(REMY_GOOD_JOB, width=90)
             st.session_state.stats[english] = score
             if st.session_state.attempt_added == False:
-                add_attempt(russian[2], russian[0], user_input, score, "writing")
-                add_streak_to_card(russian[2], effective_correct)
+                add_attempt(
+                    card_id=russian[2],
+                    correct_answer=russian[0],
+                    user_answer=st.session_state.user_input,
+                    score=st.session_state.score,
+                    is_correct=st.session_state.answer_is_correct,
+                    mode="writing",
+                    error_type=st.session_state.answer_error_type
+                )
+                add_streak_to_card(
+                    russian[2],
+                    st.session_state.answer_is_correct
+                )
                 if st.session_state.get("user"):
                     update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
                 st.session_state.attempt_added = True
@@ -697,19 +818,13 @@ def train():
         if st.session_state.submitted == False:
             user_input = rec_audio()
             if user_input:
-                sim_score = similarity(user_input, russian[0])
-                st.session_state.score = sim_score
                 st.session_state.user_input = user_input
-                st.session_state.ai_evaluation = None
-                if sim_score < 0.95 and sim_score > 0 and st.session_state.get("ai_api"):
-                    native = language_name(st.session_state.get("native_lang", "")) or "English"
-                    target = language_name(st.session_state.get("lang", ""))
-                    try:
-                        st.session_state.ai_evaluation = evaluate_translation(
-                            st.session_state.ai_api, user_input, russian[0], native, target
-                        )
-                    except Exception:
-                        pass
+
+                _evaluate_user_answer(
+                    user_answer=user_input,
+                    correct_answer=russian[0],
+                )
+
                 st.session_state.submitted = True
                 st.rerun()
 
@@ -721,7 +836,6 @@ def train():
 
         elif st.session_state.submitted == True:
             score = st.session_state.score
-            ai_eval = st.session_state.get("ai_evaluation")
             user_input = st.session_state.user_input
             st.write(f"You said: **{user_input}**")
             highlighted = _highlight_correct_words(russian[0], user_input)
@@ -731,39 +845,53 @@ def train():
             )
             st.write(f"Score: **{score:.2f}**")
 
-            effective_correct = score > 0.8 or (ai_eval is not None and ai_eval.is_acceptable)
+            is_correct = st.session_state.answer_is_correct
+            feedback = st.session_state.answer_feedback
             feedback_col, remy_col = st.columns([4, 1])
             with feedback_col:
-                if score >= 0.95:
-                    st.success("✅ Good pronunciation!")
-                elif ai_eval is not None:
-                    if ai_eval.is_acceptable:
-                        st.success("✅ Good pronunciation!")
-                        if ai_eval.feedback:
-                            st.info(ai_eval.feedback)
-                    elif ai_eval.score > 0.6:
-                        st.warning("🟡 Almost")
-                        if ai_eval.feedback:
-                            st.warning(ai_eval.feedback)
-                    else:
-                        st.error("❌ Not correct")
-                        if ai_eval.feedback:
-                            st.error(ai_eval.feedback)
-                elif score > 0.8:
-                    st.success("✅ Good pronunciation!")
-                elif score > 0.6:
-                    st.warning("🟡 Almost")
-                elif score > 0:
-                    st.error("❌ Not correct")
+                if is_correct and score >= 0.95:
+                    st.success("✅ Correct")
+
+                elif is_correct:
+                    st.success(f"✅ Correct — {score:.0%}")
+
+                    if feedback:
+                        st.info(feedback)
+
+                elif score >= 0.40:
+                    st.warning(f"🟡 Partially correct — {score:.0%}")
+
+                    if feedback:
+                        st.warning(feedback)
+
+                else:
+                    st.error(f"❌ Incorrect — {score:.0%}")
+
+                    if feedback:
+                        st.error(feedback)
+
             with remy_col:
-                if effective_correct:
+                if is_correct:
                     st.image(REMY_GOOD_JOB, width=90)
             if st.session_state.attempt_added == False:
-                add_attempt(russian[2], russian[0], user_input, score, "speaking")
-                add_streak_to_card(russian[2], effective_correct)
-                if st.session_state.get("user"):
+                add_attempt(
+                    card_id=russian[2],
+                    correct_answer=russian[0],
+                    user_answer=st.session_state.user_input,
+                    score=st.session_state.score,
+                    is_correct=st.session_state.answer_is_correct,
+                    mode="speaking",
+                    error_type=st.session_state.answer_error_type,
+                )
+
+                add_streak_to_card(
+                    russian[2],
+                    st.session_state.answer_is_correct,
+                )
+
+            if st.session_state.get("user"):
                     update_user_vocabulary(russian[0], user_input, st.session_state.lang, st.session_state.user["id"])
-                st.session_state.attempt_added = True
+            st.session_state.attempt_added = True
 
     if st.session_state.submitted == True:
         st.write("🔊 Listen to pronunciation:")

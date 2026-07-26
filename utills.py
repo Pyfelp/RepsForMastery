@@ -1,17 +1,94 @@
 import re
 from difflib import SequenceMatcher
+from typing import Optional, Tuple
 import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import unicodedata
+
+
 
 def normalize(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"[^\w\s]", "", text)
-    return text.strip()
+    """
+    Normalizes text before local comparison.
 
+    - Unicode normalization
+    - Lowercase
+    - Removes punctuation
+    - Collapses repeated whitespace
+    """
+    text = unicodedata.normalize("NFKC", text or "")
+    text = text.casefold()
+    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
+def local_answer_evaluation(
+    user_answer: str,
+    correct_answer: str,
+) -> Optional[Tuple[bool, float]]:
+    """
+    Evaluates only cases that are safe to decide without AI.
+
+    Returns:
+        (is_acceptable, score) when the result is safe locally.
+        None when semantic AI evaluation is needed.
+    """
+    normalized_user = normalize(user_answer)
+    normalized_correct = normalize(correct_answer)
+
+    if not normalized_user:
+        return False, 0.0
+
+    # Exact answer after punctuation, case and whitespace normalization.
+    if normalized_user == normalized_correct:
+        return True, 1.0
+
+    user_words = normalized_user.split()
+    correct_words = normalized_correct.split()
+
+    # Only attempt typo handling when the number of words is identical.
+    # Word omissions, additions and reordered words must be checked semantically.
+    if len(user_words) != len(correct_words):
+        return None
+
+    differing_pairs = [
+        (user_word, correct_word)
+        for user_word, correct_word in zip(user_words, correct_words)
+        if user_word != correct_word
+    ]
+
+    # More than one changed word is too uncertain for local approval.
+    if len(differing_pairs) != 1:
+        return None
+
+    user_word, correct_word = differing_pairs[0]
+
+    # Avoid treating very short words as typos.
+    # Example: "я" and "ты" are both short but semantically different.
+    if len(user_word) < 4 or len(correct_word) < 4:
+        return None
+
+    word_similarity = SequenceMatcher(
+        None,
+        user_word,
+        correct_word,
+    ).ratio()
+
+    length_difference = abs(len(user_word) - len(correct_word))
+
+    # A conservative typo rule:
+    # - same word position
+    # - only one differing word
+    # - maximum length difference of one character
+    # - very high textual similarity
+    if length_difference <= 1 and word_similarity >= 0.88:
+        return True, 0.90
+
+    return None
 def parse_flashcards(text: str) -> dict:
     text = text.strip()
 

@@ -312,21 +312,35 @@ def save_new_deck(name: str) -> bool:
         st.error(f"Kunne ikke lagre til databasen: {str(e)}")
         return False
 
-def add_attempt(card_id: int, correct_answer: str, user_answer: str, score: float, mode: str) -> bool:
+def add_attempt(
+    card_id: int,
+    correct_answer: str,
+    user_answer: str,
+    score: float,
+    is_correct: bool,
+    mode: str,
+    error_type: str = "none",
+) -> bool:
     client = get_supabase()
+
     try:
         client.table("card_attempts").insert(
             {
                 "card_id": card_id,
                 "user_answer": user_answer,
                 "correct_answer": correct_answer,
-                "is_correct": score > 0.8,
-                "score": score,
+                "is_correct": is_correct,
+                "score": max(0.0, min(float(score), 1.0)),
                 "mode": mode,
                 "language": st.session_state.lang,
+                "error_type": error_type
+                # Include this only if the database column exists:
+                # "error_type": error_type,
             }
         ).execute()
+
         return True
+
     except Exception as e:
         st.error(f"Could not save attempt: {e}")
         return False
