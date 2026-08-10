@@ -3,6 +3,7 @@ import streamlit as st
 import random
 from audio import rec_audio, play_target
 from utills import parse_flashcards, similarity, local_answer_evaluation
+from simple_answer_evaluation import evaluate_answer
 from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
     save_ai_explanation, add_attempt, add_streak_to_card, update_user_vocabulary, \
@@ -553,109 +554,27 @@ def _evaluate_user_answer(
     user_answer: str,
     correct_answer: str,
 ) -> None:
-    """
-    Evaluates an answer and stores one final result in session state.
-
-    Evaluation order:
-    1. Safe local comparison
-    2. Semantic AI evaluation
-    3. Fallback similarity when AI is unavailable or fails
-    """
     user_answer = (user_answer or "").strip()
     correct_answer = (correct_answer or "").strip()
 
-    st.session_state.ai_evaluation = None
-    st.session_state.answer_feedback = ""
-    st.session_state.answer_error_type = "none"
+    native = language_name(st.session_state.get("native_lang", "")) or "English"
+    target = language_name(st.session_state.get("lang", "")) or "the target language"
+    api_key = st.session_state.get("ai_api") or None
 
-    # Empty answer
-    if not user_answer:
-        st.session_state.score = 0.0
-        st.session_state.answer_is_correct = False
-        st.session_state.answer_feedback = ""
-        st.session_state.answer_error_type = "unclear_meaning"
-        st.session_state.evaluation_source = "empty"
-        return
-
-    # ---------------------------------------------------------
-    # 1. SAFE LOCAL EVALUATION
-    # ---------------------------------------------------------
-    local_result = local_answer_evaluation(
-        user_answer,
-        correct_answer,
+    result = evaluate_answer(
+        user_answer=user_answer,
+        correct_answer=correct_answer,
+        target_lang=target,
+        native_lang=native,
+        api_key=api_key,
     )
 
-    if local_result is not None:
-        is_acceptable, score = local_result
-
-        st.session_state.score = score
-        st.session_state.answer_is_correct = is_acceptable
-        st.session_state.answer_feedback = ""
-        st.session_state.answer_error_type = (
-            "none" if score == 1.0 else "minor_spelling"
-        )
-        st.session_state.evaluation_source = "local"
-        return
-
-    # ---------------------------------------------------------
-    # 2. SEMANTIC AI EVALUATION
-    # ---------------------------------------------------------
-    api_key = st.session_state.get("ai_api")
-
-    if api_key:
-        native = (
-            language_name(st.session_state.get("native_lang", ""))
-            or "English"
-        )
-        target = (
-            language_name(st.session_state.get("lang", ""))
-            or "the target language"
-        )
-
-        try:
-            ai_evaluation = evaluate_translation(
-                api_key,
-                user_answer,
-                correct_answer,
-                native,
-                target,
-            )
-
-            st.session_state.ai_evaluation = ai_evaluation
-            st.session_state.score = max(
-                0.0,
-                min(float(ai_evaluation.score), 1.0),
-            )
-            st.session_state.answer_is_correct = (
-                ai_evaluation.is_acceptable
-            )
-            st.session_state.answer_feedback = (
-                ai_evaluation.feedback or ""
-            )
-            st.session_state.answer_error_type = (
-                ai_evaluation.error_type
-            )
-            st.session_state.evaluation_source = "ai"
-            return
-
-        except Exception as e:
-            # During development you can show this:
-            # st.warning(f"AI evaluation failed: {e}")
-            pass
-
-    # ---------------------------------------------------------
-    # 3. FALLBACK WHEN AI IS UNAVAILABLE
-    # ---------------------------------------------------------
-    fallback_score = similarity(
-        user_answer,
-        correct_answer,
-    )
-
-    st.session_state.score = fallback_score
-    st.session_state.answer_is_correct = fallback_score >= 0.85
-    st.session_state.answer_feedback = ""
-    st.session_state.answer_error_type = "unclear_meaning"
-    st.session_state.evaluation_source = "similarity_fallback"
+    st.session_state.ai_evaluation = result if result.source == "ai" else None
+    st.session_state.score = result.score
+    st.session_state.answer_is_correct = result.is_acceptable
+    st.session_state.answer_feedback = result.feedback
+    st.session_state.answer_error_type = result.error_type
+    st.session_state.evaluation_source = result.source
 
 def _train_setup():
     deck_names = st.session_state.get("selected_deck_names") or []
@@ -769,13 +688,13 @@ def train():
                     st.success("✅ Correct")
 
                 elif is_correct:
-                    st.success(f"✅ Correct — {score:.0%}")
+                    st.success("✅ Almost correct")
 
                     if feedback:
                         st.info(feedback)
 
                 elif score >= 0.40:
-                    st.warning(f"🟡 Partially correct — {score:.0%}")
+                    st.warning("🟡 Partially correct")
 
                     if feedback:
                         st.warning(feedback)
@@ -787,7 +706,7 @@ def train():
                         st.error(feedback)
 
                 else:
-                    st.error(f"❌ Incorrect — {score:.0%}")
+                    st.error("❌ Incorrect")
 
                     if feedback:
                         st.error(feedback)
@@ -843,8 +762,6 @@ def train():
                 f"Correct: <span style='font-weight:600; font-size:16px'>{highlighted}</span>",
                 unsafe_allow_html=True
             )
-            st.write(f"Score: **{score:.2f}**")
-
             is_correct = st.session_state.answer_is_correct
             feedback = st.session_state.answer_feedback
             feedback_col, remy_col = st.columns([4, 1])
@@ -853,19 +770,19 @@ def train():
                     st.success("✅ Correct")
 
                 elif is_correct:
-                    st.success(f"✅ Correct — {score:.0%}")
+                    st.success("✅ Almost correct")
 
                     if feedback:
                         st.info(feedback)
 
                 elif score >= 0.40:
-                    st.warning(f"🟡 Partially correct — {score:.0%}")
+                    st.warning("🟡 Partially correct")
 
                     if feedback:
                         st.warning(feedback)
 
                 else:
-                    st.error(f"❌ Incorrect — {score:.0%}")
+                    st.error("❌ Incorrect")
 
                     if feedback:
                         st.error(feedback)
