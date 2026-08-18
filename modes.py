@@ -3,7 +3,7 @@ import streamlit as st
 import random
 from audio import rec_audio, play_target
 from utills import parse_flashcards, similarity, local_answer_evaluation
-from simple_answer_evaluation import evaluate_answer
+from similarity_answer_evaluation import evaluate_answer
 from db import submit_ai_key, get_user_data, save_new_deck, remove_decks, remove_cards, \
     get_cards_of_decks, get_cards_for_decks, get_cards_by_ids, \
     save_ai_explanation, add_attempt, add_streak_to_card, update_user_vocabulary, \
@@ -557,24 +557,14 @@ def _evaluate_user_answer(
     user_answer = (user_answer or "").strip()
     correct_answer = (correct_answer or "").strip()
 
-    native = language_name(st.session_state.get("native_lang", "")) or "English"
-    target = language_name(st.session_state.get("lang", "")) or "the target language"
-    api_key = st.session_state.get("ai_api") or None
+    result = evaluate_answer(user_answer, correct_answer)
 
-    result = evaluate_answer(
-        user_answer=user_answer,
-        correct_answer=correct_answer,
-        target_lang=target,
-        native_lang=native,
-        api_key=api_key,
-    )
-
-    st.session_state.ai_evaluation = result if result.source == "ai" else None
+    st.session_state.ai_evaluation = None
     st.session_state.score = result.score
     st.session_state.answer_is_correct = result.is_acceptable
-    st.session_state.answer_feedback = result.feedback
-    st.session_state.answer_error_type = result.error_type
-    st.session_state.evaluation_source = result.source
+    st.session_state.answer_feedback = ""
+    st.session_state.answer_error_type = "none"
+    st.session_state.evaluation_source = "local"
 
 def _train_setup():
     deck_names = st.session_state.get("selected_deck_names") or []
